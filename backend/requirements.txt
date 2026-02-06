@@ -1,0 +1,24 @@
+# FastAPI
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+
+# Database
+SQLAlchemy==2.0.25
+aiomysql==0.2.0
+
+# Scheduler
+APScheduler==3.10.4
+
+# ML / Scientific
+numpy==1.26.3
+scipy==1.11.4
+pandas==2.1.4
+
+# Validation
+pydantic==2.5.3
+
+# Environment
+python-dotenv==1.0.0
+
+# Utils
+python-dateutil==2.8.2
