@@ -1,0 +1,53 @@
+BACK:
+cd C:\Users\germa\Documents\NEOLAB\DATO_SOLUTIONS\neolab_smartstock\smartstock_mc_api
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+
+FRONT:
+cd C:\Users\germa\Documents\NEOLAB\DATO_SOLUTIONS\neolab_smartstock\frontend
+npm run dev
+
+http://127.0.0.1:8000/docs#
+http://127.0.0.1:8000/dashboard/sugerencias
+
+
+
+🔁 Flujo normal, Cada cambio:
+🔵 Backend (API)
+cd ...\smartstock_mc_api
+git add -A
+git commit -m "Dashboard sugerencias: estado_operativo + inactivos"
+git push
+
+🟢 Frontend (SmartStock)
+cd ...\BOLT\SmartStock
+git add -A
+git commit -m "UI: badges estado_operativo + filtros"
+git push
+
+
+🧠 Mini checklist para el futuro (guardalo mentalmente)
+
+Cada vez que terminás un cambio en el front:
+
+git status
+git add -A
+git commit -m "mensaje claro"
+git push
+
+
+Si falla:
+
+git pull --rebase
+git push
+
+
+
+git add .
+git commit -m "NEW - Add SKU history: demanda mensual, top clientes y eventos en drawer"
+git push origin main
+
+
+
+C:\Users\germa\Documents\NEOLAB\DATO_SOLUTIONS\smartstock_web>py jobs\job_reorder_mc_daily.py
+
+OK: cache actualizada

@@ -1,0 +1,34 @@
+Cómo usarlo (Windows)
+
+Daily normal (lo que querés “para olvidarte”):
+
+py ss2_daily_job.py
+
+Daily normal pero sin escribir MC (solo ver resumen MC; rebuild sí corre):
+
+py ss2_daily_job.py --dry-run
+
+Backfill de MC para una fecha (sin rebuild):
+
+py ss2_daily_job.py --asof 2026-02-03 --skip-rebuild
+
+Solo rebuild (sin MC):
+
+py ss2_daily_job.py --skip-mc
+Sobre “¿y si agrego un SKU nuevo al catálogo?”
+
+Con tu enfoque SS2, lo correcto es que el daily refresh sea el “pegamento”:
+
+Rebuild: recalcula universo/stock/features (si el SKU nuevo todavía no tiene movimientos, quedará con events_12m=0 y no entra a MC si estás en enabled_only).
+
+Policy effective: hoy se arma desde ss2_v_stock (y joins de supplier params). Si el SKU no aparece en ss2_v_stock todavía, no existe para el sistema operativo (y está bien).
+
+Cuando el SKU nuevo tenga al menos 1 evento/venta, ya entra a features y, si cumple filtro, entra a MC automáticamente.
+
+Si querés que SKUs “nuevos sin ventas” queden igualmente visibles/parametrizados (con ABC/SmartScore “BAJO” y sin sugerencias), eso es otro paso: incorporar un “universe” basado en tablaprecios (catálogo) además del stock/movimientos. Lo armamos después, pero no es necesario para que el sistema compre bien.
+
+Si te sirve, el próximo paso es dejar esto corriendo solo con Task Scheduler de Windows (sin APScheduler, sin event_scheduler de MySQL) llamando:
+
+py C:\Users\germa\Documents\NEOLAB\DATO_SOLUTIONS\neolab_smartstock\ss2\scripts\ss2_daily_job.py
+
+y listo.

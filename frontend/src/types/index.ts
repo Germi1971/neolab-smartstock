@@ -49,10 +49,12 @@ export interface StockFilters {
 // ==================== Purchase Types ====================
 
 export interface PurchaseSuggestion {
+  [key: string]: any;
   sku: string;
   descripcion: string;
   stock_posicion: number;
   stock_objetivo: number;
+  stock_objetivo_calculado: number;
   qty_sugerida: number;
   qty_final: number | null;
   estado: 'PENDIENTE' | 'APROBADO' | 'RECHAZADO';
@@ -71,6 +73,7 @@ export interface ApproveRequest {
 }
 
 export interface PurchaseFilters {
+  [key: string]: any;
   sku?: string;
   descripcion?: string;
   estado?: string;
@@ -101,6 +104,7 @@ export interface ParameterFilters {
 // ==================== ML Types ====================
 
 export interface MLRun {
+  [key: string]: any;
   run_id: string;
   started_at: string;
   finished_at: string | null;
@@ -113,6 +117,7 @@ export interface MLRun {
 }
 
 export interface MLRunFilters {
+  [key: string]: any;
   status?: string;
   triggered_by?: string;
   fecha_desde?: string;
@@ -120,6 +125,7 @@ export interface MLRunFilters {
 }
 
 export interface MLModelInfo {
+  [key: string]: any;
   sku: string;
   modelo_actual: string;
   modelo_anterior: string | null;

@@ -16,7 +16,7 @@ logger = get_logger(__name__)
 # Database URL from environment or default
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "mysql+aiomysql://user:password@localhost:3306/neolab_smartstock"
+    "mysql+aiomysql://neolab:MYsql437626#@190.228.29.65:3306/neobd?charset=utf8"
 )
 
 # Create async engine

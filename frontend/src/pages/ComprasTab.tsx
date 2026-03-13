@@ -13,7 +13,8 @@ const columns = [
   { key: 'sku', header: 'SKU', sortable: true, width: '120px' },
   { key: 'descripcion', header: 'Descripción', sortable: true, width: '250px' },
   { key: 'stock_posicion', header: 'Stock Pos.', sortable: true, width: '100px', align: 'right' as const },
-  { key: 'stock_objetivo', header: 'Stock Obj.', sortable: true, width: '100px', align: 'right' as const },
+  { key: 'stock_objetivo', header: 'Stock Obj (Param)', sortable: true, width: '120px', align: 'right' as const },
+  { key: 'stock_objetivo_calculado', header: 'Stock Obj (ML)', sortable: true, width: '120px', align: 'right' as const },
   { key: 'qty_sugerida', header: 'Qty Sug.', sortable: true, width: '100px', align: 'right' as const },
   { key: 'estado', header: 'Estado', sortable: true, width: '120px' },
   { key: 'modelo_seleccionado', header: 'Modelo', sortable: true, width: '100px' },
@@ -93,27 +94,27 @@ export function ComprasTab() {
 
   const kpiData = stats
     ? [
-        {
-          title: 'Total Sugerencias',
-          value: stats.total_sugerencias?.toString() || '0',
-          color: 'blue' as const,
-        },
-        {
-          title: 'Pendientes',
-          value: stats.pendientes?.toString() || '0',
-          color: 'yellow' as const,
-        },
-        {
-          title: 'Aprobadas',
-          value: stats.aprobadas?.toString() || '0',
-          color: 'green' as const,
-        },
-        {
-          title: 'Qty Total Sugerida',
-          value: stats.total_qty_sugerida?.toLocaleString() || '0',
-          color: 'purple' as const,
-        },
-      ]
+      {
+        title: 'Total Sugerencias',
+        value: stats.total_sugerencias?.toString() || '0',
+        color: 'blue' as const,
+      },
+      {
+        title: 'Pendientes',
+        value: stats.pendientes?.toString() || '0',
+        color: 'yellow' as const,
+      },
+      {
+        title: 'Aprobadas',
+        value: stats.aprobadas?.toString() || '0',
+        color: 'green' as const,
+      },
+      {
+        title: 'Qty Total Sugerida',
+        value: stats.total_qty_sugerida?.toLocaleString() || '0',
+        color: 'purple' as const,
+      },
+    ]
     : [];
 
   const filterFields = [

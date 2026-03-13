@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { PaginationParams, SortConfig, ApiListResponse } from '../types';
 
 interface UsePaginatedDataOptions<T, F> {
@@ -6,7 +6,7 @@ interface UsePaginatedDataOptions<T, F> {
   filters?: F;
   initialPage?: number;
   initialPageSize?: number;
-  initialSortKey?: string;
+  initialSortKey?: string | null;
   initialSortDirection?: 'asc' | 'desc';
 }
 
@@ -50,7 +50,34 @@ export function usePaginatedData<T extends ApiListResponse<unknown>, F>(
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
+  /**
+   * 🔒 FIX 1: estabiliza filters para dependencias
+   */
+  const filtersKey = useMemo(() => JSON.stringify(filters ?? {}), [filters]);
+
+  /**
+   * 🔒 FIX 2 (anti-loop definitivo): fetchFn en ref
+   * Aunque el componente cree fetchFn inline en cada render,
+   * NO dispara nuevos fetch por el identity-change.
+   */
+  const fetchFnRef = useRef(fetchFn);
+  useEffect(() => {
+    fetchFnRef.current = fetchFn;
+  }, [fetchFn]);
+
+  /**
+   * 🔒 FIX 3: evitar requests simultáneos si el render se acelera
+   */
+  const inFlightRef = useRef<AbortController | null>(null);
+
   const fetchData = useCallback(async () => {
+    // cancela el request anterior si aún está corriendo
+    if (inFlightRef.current) {
+      inFlightRef.current.abort();
+    }
+    const controller = new AbortController();
+    inFlightRef.current = controller;
+
     setIsLoading(true);
     setError(null);
 
@@ -65,18 +92,45 @@ export function usePaginatedData<T extends ApiListResponse<unknown>, F>(
         ...filters,
       };
 
-      const result = await fetchFn(params);
+      /**
+       * NOTA: si tu fetchFn usa fetch() nativo y soporta AbortSignal,
+       * podrías pasar signal dentro de params o como arg extra.
+       * Como acá tu fetchFn firma (params) => Promise<T>,
+       * solo abortamos para evitar setState de requests viejos.
+       */
+      const result = await fetchFnRef.current(params);
+
+      // si fue abortado, no tocar state
+      if (controller.signal.aborted) return;
+
       setData(result);
     } catch (err) {
+      // si fue abortado, ignorar
+      if (controller.signal.aborted) return;
+
       setError(err instanceof Error ? err.message : 'An error occurred');
       setData(null);
     } finally {
-      setIsLoading(false);
+      if (!controller.signal.aborted) {
+        setIsLoading(false);
+      }
     }
-  }, [fetchFn, page, pageSize, sortConfig, filters, refreshKey]);
+  }, [
+    page,
+    pageSize,
+    sortConfig.key,
+    sortConfig.direction,
+    filtersKey,   // <- depende del contenido de filters, no de la ref
+    refreshKey,
+    // NO fetchFn acá
+  ]);
 
   useEffect(() => {
     fetchData();
+    return () => {
+      // cleanup: aborta si el componente desmonta
+      if (inFlightRef.current) inFlightRef.current.abort();
+    };
   }, [fetchData]);
 
   const handlePageChange = useCallback((newPage: number) => {
@@ -85,7 +139,7 @@ export function usePaginatedData<T extends ApiListResponse<unknown>, F>(
 
   const handlePageSizeChange = useCallback((newPageSize: number) => {
     setPageSize(newPageSize);
-    setPage(1); // Reset to first page when changing page size
+    setPage(1);
   }, []);
 
   const handleSort = useCallback((key: string) => {
@@ -94,6 +148,7 @@ export function usePaginatedData<T extends ApiListResponse<unknown>, F>(
       direction:
         current.key === key && current.direction === 'asc' ? 'desc' : 'asc',
     }));
+    setPage(1);
   }, []);
 
   const refresh = useCallback(() => {
@@ -106,7 +161,9 @@ export function usePaginatedData<T extends ApiListResponse<unknown>, F>(
       page,
       pageSize,
       totalItems: data?.total || 0,
-      totalPages: data?.total_pages || 1,
+      totalPages:
+        data?.total_pages ??
+        Math.max(1, Math.ceil((data?.total || 0) / pageSize)),
     },
     sortConfig,
     isLoading,
@@ -117,3 +174,4 @@ export function usePaginatedData<T extends ApiListResponse<unknown>, F>(
     refresh,
   };
 }
+

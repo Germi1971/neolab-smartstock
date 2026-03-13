@@ -1,23 +1,14 @@
-import {
-  PaginationParams,
-  ApiListResponse,
-  StockItem,
-  StockFilters,
-  PurchaseSuggestion,
-  PurchaseFilters,
-  ApproveRequest,
-  SKUParameter,
-  ParameterFilters,
-  MLRun,
-  MLRunFilters,
-  MLModelInfo,
-  MLFeatures,
-  SKUDetail,
-  HealthResponse,
-  MLRunResponse,
-} from '../types';
+// frontend/src/services/apiClient.ts
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
+const API_BASE_URL =
+  import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+
+export type ApiError = Error & {
+  request?: { url: string; method: string };
+  response?: { status: number; data: any };
+};
+
+import { PurchaseSuggestion, ApiListResponse } from '../types';
 
 class ApiClient {
   private baseUrl: string;
@@ -26,170 +17,166 @@ class ApiClient {
     this.baseUrl = baseUrl;
   }
 
+  // =========================================================
+  // Core request
+  // =========================================================
   private async request<T>(
     endpoint: string,
     options: RequestInit = {}
   ): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
-    const config: RequestInit = {
-      headers: {
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
-      ...options,
-    };
+    const method = (options.method || 'GET').toUpperCase();
 
-    const response = await fetch(url, config);
+    try {
+      const response = await fetch(url, {
+        ...options,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(options.headers || {}),
+        },
+      });
 
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ message: 'Unknown error' }));
-      throw new Error(error.message || `HTTP ${response.status}: ${response.statusText}`);
-    }
+      const contentType = response.headers.get('content-type') || '';
+      const isJson = contentType.includes('application/json');
+      const data: any = isJson ? await response.json() : await response.text();
 
-    // Handle blob responses (exports)
-    if (options.headers?.['Accept'] === 'text/csv') {
-      return response.blob() as Promise<T>;
-    }
-
-    return response.json();
-  }
-
-  private buildQueryString(params: Record<string, unknown>): string {
-    const query = new URLSearchParams();
-    Object.entries(params).forEach(([key, value]) => {
-      if (value !== undefined && value !== null && value !== '') {
-        query.append(key, String(value));
+      if (!response.ok) {
+        const err: ApiError = new Error(
+          data?.detail || data?.message || `HTTP ${response.status}`
+        );
+        err.request = { url, method };
+        err.response = { status: response.status, data };
+        throw err;
       }
-    });
-    const queryString = query.toString();
-    return queryString ? `?${queryString}` : '';
+
+      return data as T;
+    } catch (e: any) {
+      if (e?.request || e?.response) throw e;
+
+      const err: ApiError = new Error(e?.message || 'Network error');
+      err.request = { url, method };
+      err.response = { status: 0, data: null };
+      throw err;
+    }
   }
 
-  // ==================== Stock Endpoints ====================
-
-  async getStock(
-    params: PaginationParams & StockFilters = {}
-  ): Promise<ApiListResponse<StockItem>> {
-    return this.request(`/stock${this.buildQueryString(params)}`);
-  }
-
-  async getStockBySKU(sku: string): Promise<StockItem> {
-    return this.request(`/stock/${encodeURIComponent(sku)}`);
-  }
-
-  // ==================== Purchase Suggestions Endpoints ====================
-
-  async getPurchaseSuggestions(
-    params: PaginationParams & PurchaseFilters = {}
-  ): Promise<ApiListResponse<PurchaseSuggestion>> {
-    return this.request(`/purchases/suggestions${this.buildQueryString(params)}`);
-  }
-
-  async getSuggestionBySKU(sku: string): Promise<PurchaseSuggestion> {
-    return this.request(`/purchases/suggestions/${encodeURIComponent(sku)}`);
-  }
-
-  async approveSuggestion(
-    sku: string,
-    data: ApproveRequest
-  ): Promise<PurchaseSuggestion> {
-    return this.request(`/purchases/suggestions/${encodeURIComponent(sku)}/approve`, {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-  }
-
-  async unapproveSuggestion(sku: string): Promise<PurchaseSuggestion> {
-    return this.request(`/purchases/suggestions/${encodeURIComponent(sku)}/unapprove`, {
-      method: 'POST',
-    });
-  }
-
-  async exportPurchaseOrder(
-    params: PurchaseFilters & { limit?: number } = {}
-  ): Promise<Blob> {
-    return this.request(`/purchases/export${this.buildQueryString(params)}`, {
-      headers: { Accept: 'text/csv' },
-    });
-  }
-
-  // ==================== SKU Parameters Endpoints ====================
-
-  async getSKUParameters(
-    params: PaginationParams & ParameterFilters = {}
-  ): Promise<ApiListResponse<SKUParameter>> {
-    return this.request(`/parameters${this.buildQueryString(params)}`);
-  }
-
-  async getSKUParameter(sku: string): Promise<SKUParameter> {
-    return this.request(`/parameters/${encodeURIComponent(sku)}`);
-  }
-
-  async updateSKUParameter(
-    sku: string,
-    data: Partial<SKUParameter>
-  ): Promise<SKUParameter> {
-    return this.request(`/parameters/${encodeURIComponent(sku)}`, {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    });
-  }
-
-  async bulkUpdateSKUParameters(
-    data: Array<{ sku: string } & Partial<SKUParameter>>
-  ): Promise<{ updated: number }> {
-    return this.request('/parameters/bulk', {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    });
-  }
-
-  // ==================== ML Endpoints ====================
-
-  async getMLRuns(
-    params: PaginationParams & MLRunFilters = {}
-  ): Promise<ApiListResponse<MLRun>> {
-    return this.request(`/ml/runs${this.buildQueryString(params)}`);
-  }
-
-  async getMLRun(runId: string): Promise<MLRun> {
-    return this.request(`/ml/runs/${encodeURIComponent(runId)}`);
-  }
-
-  async getMLModels(
-    params: PaginationParams = {}
-  ): Promise<ApiListResponse<MLModelInfo>> {
-    return this.request(`/ml/models${this.buildQueryString(params)}`);
-  }
-
-  async getMLModelBySKU(sku: string): Promise<MLModelInfo> {
-    return this.request(`/ml/models/${encodeURIComponent(sku)}`);
-  }
-
-  async getMLFeatures(sku: string): Promise<MLFeatures> {
-    return this.request(`/ml/features/${encodeURIComponent(sku)}`);
-  }
-
-  async runMLPipeline(): Promise<MLRunResponse> {
-    return this.request('/ml/run', {
-      method: 'POST',
-    });
-  }
-
-  // ==================== SKU Detail Endpoint ====================
-
-  async getSKUDetail(sku: string): Promise<SKUDetail> {
-    return this.request(`/sku/${encodeURIComponent(sku)}/detail`);
-  }
-
-  // ==================== Health Endpoints ====================
-
-  async getHealth(): Promise<HealthResponse> {
+  // =========================================================
+  // HEALTH
+  // =========================================================
+  async healthCheck() {
     return this.request('/health');
   }
 
-  async getMetrics(): Promise<Record<string, unknown>> {
-    return this.request('/metrics');
+  // =========================================================
+  // STOCK
+  // =========================================================
+  async getStock(params: Record<string, any>) {
+    const qp = new URLSearchParams();
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== '') {
+        qp.append(k, String(v));
+      }
+    });
+    return this.request(`/api/stock?${qp.toString()}`);
+  }
+
+  async getSKUParameters(params: Record<string, any>) {
+    const qp = new URLSearchParams();
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== '') {
+        qp.append(k, String(v));
+      }
+    });
+    return this.request(`/api/parameters?${qp.toString()}`);
+  }
+
+  async updateSKUParameter(sku: string, updates: Partial<any>) {
+    return this.request(`/api/parameters/${encodeURIComponent(sku)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(updates),
+    });
+  }
+
+  async getPurchaseSuggestions(params: Record<string, any>): Promise<ApiListResponse<PurchaseSuggestion>> {
+    const qp = new URLSearchParams();
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== '') {
+        qp.append(k, String(v));
+      }
+    });
+    return this.request<ApiListResponse<PurchaseSuggestion>>(`/api/purchases/suggestions?${qp.toString()}`);
+  }
+
+  // =========================================================
+  // ML – RUNS & PIPELINE
+  // =========================================================
+  async getMLRuns(params: Record<string, any>) {
+    const qp = new URLSearchParams();
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== '') {
+        qp.append(k, String(v));
+      }
+    });
+    return this.request(`/api/ml/runs?${qp.toString()}`);
+  }
+
+  async runMLPipeline(payload: { sku?: string; skus?: string[] } = {}) {
+    return this.request('/api/ml/run', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async getMLModels(params: Record<string, any> = {}) {
+    const qp = new URLSearchParams();
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== '') {
+        qp.append(k, String(v));
+      }
+    });
+    return this.request(`/api/ml/models?${qp.toString()}`);
+  }
+
+  async getSKUDetail(sku: string) {
+    if (!sku) throw new Error('SKU vacío');
+    return this.request(`/api/ml/sku/${encodeURIComponent(sku)}`);
+  }
+
+  async approveSuggestion(sku: string, payload: { qty_final: number; notas?: string }) {
+    return this.request(`/api/purchases/approve/${encodeURIComponent(sku)}`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async unapproveSuggestion(sku: string) {
+    return this.request(`/api/purchases/unapprove/${encodeURIComponent(sku)}`, {
+      method: 'POST',
+    });
+  }
+
+  async exportPurchaseOrder(params: Record<string, any>) {
+    const qp = new URLSearchParams();
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== '') {
+        qp.append(k, String(v));
+      }
+    });
+    const url = `${this.baseUrl}/api/purchases/export?${qp.toString()}`;
+    const response = await fetch(url);
+    if (!response.ok) throw new Error('Export failed');
+    return response.blob();
+  }
+
+  async syncMLSuggestions(payload: { run_id?: string; sku?: string } = {}) {
+    return this.request<{ ok: boolean; updated_count: number; message: string }>('/api/ml/suggestions/sync', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async getSKUFeatures(sku: string) {
+    return this.request(`/api/ml/features/${encodeURIComponent(sku)}`);
   }
 }
 

@@ -39,7 +39,7 @@ Sistema profesional de predicción de reposición de compras con motor ML, sched
 
 ```
 neolab_smartstock/
-├── backend/
+├── backend/                    # API principal FastAPI
 │   ├── main.py                 # FastAPI app
 │   ├── requirements.txt        # Python dependencies
 │   ├── db/
@@ -89,6 +89,12 @@ neolab_smartstock/
 │           ├── ComprasTab.tsx
 │           ├── ParametrosTab.tsx
 │           └── MLTab.tsx
+├── smartstock_mc_api/          # API Monte Carlo (Stock HUD)
+│   ├── app/                    # main.py, routes_dashboard, routes_sku_history
+│   └── deploy/                 # setup-lightsail.sh, env.lightsail.example
+├── ss2/                        # Scripts batch Monte Carlo
+│   ├── scripts/                # ss2_daily_job.py, ss2_monte_carlo.py
+│   └── sql/                    # vistas y procedures
 └── database/
     ├── schema_fase1.sql        # Core schema
     ├── schema_fase2.sql        # ML advanced schema

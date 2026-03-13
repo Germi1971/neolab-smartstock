@@ -1,0 +1,1163 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AIIA - Adaptive Inventory Intelligence App</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/11.8.0/math.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'aiia-dark': '#0f172a',
+                        'aiia-panel': '#1e293b',
+                        'aiia-accent': '#3b82f6',
+                        'aiia-success': '#10b981',
+                        'aiia-warning': '#f59e0b',
+                        'aiia-danger': '#ef4444',
+                        'aiia-purple': '#8b5cf6'
+                    },
+                    animation: {
+                        'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                        'slide-in': 'slideIn 0.5s ease-out',
+                        'fade-in': 'fadeIn 0.3s ease-out'
+                    },
+                    keyframes: {
+                        slideIn: {
+                            '0%': { transform: 'translateX(-100%)', opacity: '0' },
+                            '100%': { transform: 'translateX(0)', opacity: '1' }
+                        },
+                        fadeIn: {
+                            '0%': { opacity: '0' },
+                            '100%': { opacity: '1' }
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        .glass-panel {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .gradient-text {
+            background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .metric-card {
+            transition: all 0.3s ease;
+        }
+        .metric-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 40px -10px rgba(59, 130, 246, 0.3);
+        }
+        .quadrant-smooth { background: linear-gradient(135deg, #10b981 0%, #059669 100%); }
+        .quadrant-erratic { background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); }
+        .quadrant-intermittent { background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); }
+        .quadrant-lumpy { background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); }
+    </style>
+</head>
+<body class="bg-aiia-dark text-gray-100 min-h-screen overflow-x-hidden">
+    <!-- Header -->
+    <header class="glass-panel sticky top-0 z-50 border-b border-gray-800">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between items-center h-16">
+                <div class="flex items-center space-x-3">
+                    <div class="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center shadow-lg shadow-blue-500/30">
+                        <i class="fas fa-brain text-white text-xl"></i>
+                    </div>
+                    <div>
+                        <h1 class="text-2xl font-bold tracking-tight">AIIA</h1>
+                        <p class="text-xs text-gray-400">Adaptive Inventory Intelligence</p>
+                    </div>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <div class="hidden md:flex items-center space-x-2 text-sm text-gray-400">
+                        <span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                        <span>Sistema Activo</span>
+                    </div>
+                    <button class="p-2 rounded-lg hover:bg-gray-800 transition-colors relative">
+                        <i class="fas fa-bell text-gray-400"></i>
+                        <span class="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full"></span>
+                    </button>
+                    <div class="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-sm font-bold">
+                        AD
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Layout -->
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            
+            <!-- Sidebar Navigation -->
+            <nav class="lg:col-span-2 space-y-2">
+                <button onclick="switchView('dashboard')" id="nav-dashboard" class="w-full text-left px-4 py-3 rounded-lg bg-blue-600/20 border border-blue-500/30 text-blue-400 font-medium transition-all hover:bg-blue-600/30 flex items-center space-x-3">
+                    <i class="fas fa-chart-line w-5"></i>
+                    <span>Dashboard</span>
+                </button>
+                <button onclick="switchView('diagnostic')" id="nav-diagnostic" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-800 text-gray-400 transition-all flex items-center space-x-3">
+                    <i class="fas fa-microscope w-5"></i>
+                    <span>Diagnóstico</span>
+                </button>
+                <button onclick="switchView('models')" id="nav-models" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-800 text-gray-400 transition-all flex items-center space-x-3">
+                    <i class="fas fa-robot w-5"></i>
+                    <span>Modelos ML</span>
+                </button>
+                <button onclick="switchView('sensing')" id="nav-sensing" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-800 text-gray-400 transition-all flex items-center space-x-3">
+                    <i class="fas fa-satellite-dish w-5"></i>
+                    <span>Demand Sensing</span>
+                </button>
+                <button onclick="switchView('montecarlo')" id="nav-montecarlo" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-800 text-gray-400 transition-all flex items-center space-x-3">
+                    <i class="fas fa-dice w-5"></i>
+                    <span>Simulación MC</span>
+                </button>
+                <button onclick="switchView('execution')" id="nav-execution" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-800 text-gray-400 transition-all flex items-center space-x-3">
+                    <i class="fas fa-shopping-cart w-5"></i>
+                    <span>Ejecución</span>
+                </button>
+            </nav>
+
+            <!-- Main Content Area -->
+            <main class="lg:col-span-10 space-y-6">
+                
+                <!-- View: Dashboard -->
+                <div id="view-dashboard" class="space-y-6 animate-fade-in">
+                    <!-- KPI Cards -->
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                        <div class="metric-card glass-panel rounded-xl p-6 border-l-4 border-blue-500">
+                            <div class="flex justify-between items-start">
+                                <div>
+                                    <p class="text-gray-400 text-sm">SKUs Activos</p>
+                                    <h3 class="text-3xl font-bold mt-1" id="kpi-skus">1,247</h3>
+                                    <p class="text-green-400 text-xs mt-2 flex items-center">
+                                        <i class="fas fa-arrow-up mr-1"></i> +3.2% vs mes anterior
+                                    </p>
+                                </div>
+                                <div class="p-3 bg-blue-500/20 rounded-lg">
+                                    <i class="fas fa-boxes text-blue-400 text-xl"></i>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="metric-card glass-panel rounded-xl p-6 border-l-4 border-yellow-500">
+                            <div class="flex justify-between items-start">
+                                <div>
+                                    <p class="text-gray-400 text-sm">Precisión Pronóstico</p>
+                                    <h3 class="text-3xl font-bold mt-1" id="kpi-accuracy">94.3%</h3>
+                                    <p class="text-green-400 text-xs mt-2 flex items-center">
+                                        <i class="fas fa-arrow-up mr-1"></i> +1.8% optimización ML
+                                    </p>
+                                </div>
+                                <div class="p-3 bg-yellow-500/20 rounded-lg">
+                                    <i class="fas fa-bullseye text-yellow-400 text-xl"></i>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="metric-card glass-panel rounded-xl p-6 border-l-4 border-red-500">
+                            <div class="flex justify-between items-start">
+                                <div>
+                                    <p class="text-gray-400 text-sm">Alertas Críticas</p>
+                                    <h3 class="text-3xl font-bold mt-1" id="kpi-alerts">12</h3>
+                                    <p class="text-red-400 text-xs mt-2 flex items-center">
+                                        <i class="fas fa-exclamation-triangle mr-1"></i> Requieren acción
+                                    </p>
+                                </div>
+                                <div class="p-3 bg-red-500/20 rounded-lg">
+                                    <i class="fas fa-bell text-red-400 text-xl"></i>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="metric-card glass-panel rounded-xl p-6 border-l-4 border-purple-500">
+                            <div class="flex justify-between items-start">
+                                <div>
+                                    <p class="text-gray-400 text-sm">Ahorro Proyectado</p>
+                                    <h3 class="text-3xl font-bold mt-1" id="kpi-savings">$284K</h3>
+                                    <p class="text-purple-400 text-xs mt-2 flex items-center">
+                                        <i class="fas fa-coins mr-1"></i> Optimización stock
+                                    </p>
+                                </div>
+                                <div class="p-3 bg-purple-500/20 rounded-lg">
+                                    <i class="fas fa-piggy-bank text-purple-400 text-xl"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Critical Alerts Section -->
+                    <div class="glass-panel rounded-xl p-6">
+                        <div class="flex justify-between items-center mb-6">
+                            <div>
+                                <h2 class="text-xl font-bold flex items-center">
+                                    <i class="fas fa-exclamation-circle text-red-500 mr-2"></i>
+                                    Alertas de Reposición Críticas
+                                </h2>
+                                <p class="text-gray-400 text-sm mt-1">Artículos Clase A con riesgo de quiebre en < 7 días</p>
+                            </div>
+                            <button class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm font-medium transition-colors">
+                                Exportar Órdenes
+                            </button>
+                        </div>
+                        
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left">
+                                <thead class="text-gray-400 text-xs uppercase tracking-wider border-b border-gray-700">
+                                    <tr>
+                                        <th class="pb-3">SKU</th>
+                                        <th class="pb-3">Producto</th>
+                                        <th class="pb-3">Clase</th>
+                                        <th class="pb-3">Stock Actual</th>
+                                        <th class="pb-3">Demanda Pron.</th>
+                                        <th class="pb-3">Días Cobertura</th>
+                                        <th class="pb-3">Riesgo</th>
+                                        <th class="pb-3">Acción</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="text-sm" id="critical-alerts-table">
+                                    <!-- Populated by JS -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Charts Row -->
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <div class="glass-panel rounded-xl p-6">
+                            <h3 class="text-lg font-semibold mb-4">Distribución por Cuadrantes</h3>
+                            <canvas id="quadrantChart" height="250"></canvas>
+                        </div>
+                        <div class="glass-panel rounded-xl p-6">
+                            <h3 class="text-lg font-semibold mb-4">Evolución de Precisión (SBA vs Red Neuronal)</h3>
+                            <canvas id="accuracyChart" height="250"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- View: Diagnostic -->
+                <div id="view-diagnostic" class="hidden space-y-6 animate-fade-in">
+                    <div class="glass-panel rounded-xl p-6">
+                        <h2 class="text-2xl font-bold mb-6">Módulo de Diagnóstico - Segmentación Estadística</h2>
+                        
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                            <div class="bg-gray-800/50 rounded-lg p-4">
+                                <h3 class="font-semibold mb-3 text-blue-400">Cálculo de Métricas</h3>
+                                <div class="space-y-2 text-sm">
+                                    <div class="flex justify-between p-2 bg-gray-900 rounded">
+                                        <span>ADI (Average Demand Interval):</span>
+                                        <code class="text-blue-300">ADI = Σ(t_i) / (n-1)</code>
+                                    </div>
+                                    <div class="flex justify-between p-2 bg-gray-900 rounded">
+                                        <span>CV² (Coef. Variación Cuadrático):</span>
+                                        <code class="text-blue-300">CV² = (σ/μ)²</code>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="bg-gray-800/50 rounded-lg p-4">
+                                <h3 class="font-semibold mb-3 text-purple-400">Clasificación ABC</h3>
+                                <p class="text-sm text-gray-400 mb-2">Basado en Margen de Contribución ($)</p>
+                                <div class="space-y-2">
+                                    <div class="flex items-center justify-between">
+                                        <span class="text-sm">Clase A (Top 20%)</span>
+                                        <div class="w-32 h-2 bg-gray-700 rounded-full overflow-hidden">
+                                            <div class="h-full bg-green-500 w-[80%]"></div>
+                                        </div>
+                                    </div>
+                                    <div class="flex items-center justify-between">
+                                        <span class="text-sm">Clase B (Sig. 30%)</span>
+                                        <div class="w-32 h-2 bg-gray-700 rounded-full overflow-hidden">
+                                            <div class="h-full bg-yellow-500 w-[50%]"></div>
+                                        </div>
+                                    </div>
+                                    <div class="flex items-center justify-between">
+                                        <span class="text-sm">Clase C (Resto 50%)</span>
+                                        <div class="w-32 h-2 bg-gray-700 rounded-full overflow-hidden">
+                                            <div class="h-full bg-red-500 w-[20%]"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="relative h-96 bg-gray-900 rounded-xl p-6 overflow-hidden">
+                            <h3 class="text-lg font-semibold mb-4">Matriz de Segmentación ADI/CV²</h3>
+                            <div class="absolute inset-0 flex items-center justify-center">
+                                <div class="relative w-full max-w-2xl h-64">
+                                    <!-- Quadrant Grid -->
+                                    <div class="absolute inset-0 grid grid-cols-2 grid-rows-2 gap-1">
+                                        <div class="quadrant-intermittent rounded-tl-lg opacity-20 flex items-center justify-center text-xs font-bold">Intermittent</div>
+                                        <div class="quadrant-lumpy rounded-tr-lg opacity-20 flex items-center justify-center text-xs font-bold">Lumpy</div>
+                                        <div class="quadrant-smooth rounded-bl-lg opacity-20 flex items-center justify-center text-xs font-bold">Smooth</div>
+                                        <div class="quadrant-erratic rounded-br-lg opacity-20 flex items-center justify-center text-xs font-bold">Erratic</div>
+                                    </div>
+                                    
+                                    <!-- Scatter Plot Points -->
+                                    <svg id="scatter-plot" class="absolute inset-0 w-full h-full">
+                                        <!-- Points generated by JS -->
+                                    </svg>
+                                    
+                                    <!-- Axis Labels -->
+                                    <div class="absolute bottom-0 left-0 right-0 text-center text-xs text-gray-500">ADI (Average Demand Interval)</div>
+                                    <div class="absolute left-0 top-0 bottom-0 flex items-center">
+                                        <span class="text-xs text-gray-500 -rotate-90 whitespace-nowrap">CV² (Squared Coefficient of Variation)</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mt-6 grid grid-cols-2 md:grid-cols-4 gap-4">
+                            <div class="bg-green-900/30 border border-green-500/30 rounded-lg p-4 text-center">
+                                <div class="text-2xl font-bold text-green-400" id="count-smooth">0</div>
+                                <div class="text-xs text-gray-400">Smooth</div>
+                            </div>
+                            <div class="bg-yellow-900/30 border border-yellow-500/30 rounded-lg p-4 text-center">
+                                <div class="text-2xl font-bold text-yellow-400" id="count-erratic">0</div>
+                                <div class="text-xs text-gray-400">Erratic</div>
+                            </div>
+                            <div class="bg-blue-900/30 border border-blue-500/30 rounded-lg p-4 text-center">
+                                <div class="text-2xl font-bold text-blue-400" id="count-intermittent">0</div>
+                                <div class="text-xs text-gray-400">Intermittent</div>
+                            </div>
+                            <div class="bg-red-900/30 border border-red-500/30 rounded-lg p-4 text-center">
+                                <div class="text-2xl font-bold text-red-400" id="count-lumpy">0</div>
+                                <div class="text-xs text-gray-400">Lumpy</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- View: Models -->
+                <div id="view-models" class="hidden space-y-6 animate-fade-in">
+                    <div class="glass-panel rounded-xl p-6">
+                        <h2 class="text-2xl font-bold mb-6">Motor de Selección de Modelos Multi-Algoritmo</h2>
+                        
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <!-- SBA Model -->
+                            <div class="bg-gray-800/50 rounded-lg p-5 border border-blue-500/30 hover:border-blue-500 transition-colors">
+                                <div class="flex items-center justify-between mb-3">
+                                    <h3 class="font-bold text-blue-400">Syntetos-Boylan Approximation (SBA)</h3>
+                                    <span class="px-2 py-1 bg-blue-500/20 text-blue-300 text-xs rounded">Smooth/Intermittent</span>
+                                </div>
+                                <p class="text-sm text-gray-400 mb-3">Elimina sesgo en demanda intermitente mediante corrección del estimador Croston.</p>
+                                <div class="bg-gray-900 rounded p-3 font-mono text-xs text-green-400">
+                                    Y' = (1 - α/k) * Z'<br>
+                                    donde k = p'/q'
+                                </div>
+                                <div class="mt-3 flex items-center text-xs text-gray-500">
+                                    <i class="fas fa-check-circle text-green-500 mr-2"></i>
+                                    <span>Asignado a 342 SKUs</span>
+                                </div>
+                            </div>
+
+                            <!-- TSB Model -->
+                            <div class="bg-gray-800/50 rounded-lg p-5 border border-purple-500/30 hover:border-purple-500 transition-colors">
+                                <div class="flex items-center justify-between mb-3">
+                                    <h3 class="font-bold text-purple-400">TSB (Teunter-Syntetos-Babai)</h3>
+                                    <span class="px-2 py-1 bg-purple-500/20 text-purple-300 text-xs rounded">Obsolescencia</span>
+                                </div>
+                                <p class="text-sm text-gray-400 mb-3">Actualiza probabilidad de demanda en cada periodo, ideal para riesgo de obsolescencia.</p>
+                                <div class="bg-gray-900 rounded p-3 font-mono text-xs text-green-400">
+                                    p_t = p_{t-1} + α(δ_t - p_{t-1})<br>
+                                    Forecast = p_t * Z_t
+                                </div>
+                                <div class="mt-3 flex items-center text-xs text-gray-500">
+                                    <i class="fas fa-check-circle text-green-500 mr-2"></i>
+                                    <span>Asignado a 156 SKUs</span>
+                                </div>
+                            </div>
+
+                            <!-- Hierarchical Bayesian -->
+                            <div class="bg-gray-800/50 rounded-lg p-5 border border-red-500/30 hover:border-red-500 transition-colors">
+                                <div class="flex items-center justify-between mb-3">
+                                    <h3 class="font-bold text-red-400">TSB-HB (Hierarchical Bayes)</h3>
+                                    <span class="px-2 py-1 bg-red-500/20 text-red-300 text-xs rounded">Lumpy/Cold-start</span>
+                                </div>
+                                <p class="text-sm text-gray-400 mb-3">Partial pooling entre SKUs similares. Comparte información para artículos nuevos o datos escasos.</p>
+                                <div class="bg-gray-900 rounded p-3 font-mono text-xs text-green-400">
+                                    θ_i ~ N(μ, σ²)<br>
+                                    μ ~ N(μ₀, τ²) // Prior jerárquico
+                                </div>
+                                <div class="mt-3 flex items-center text-xs text-gray-500">
+                                    <i class="fas fa-check-circle text-green-500 mr-2"></i>
+                                    <span>Asignado a 89 SKUs</span>
+                                </div>
+                            </div>
+
+                            <!-- Neural Network -->
+                            <div class="bg-gray-800/50 rounded-lg p-5 border border-yellow-500/30 hover:border-yellow-500 transition-colors">
+                                <div class="flex items-center justify-between mb-3">
+                                    <h3 class="font-bold text-yellow-400">Rprop Neural Network</h3>
+                                    <span class="px-2 py-1 bg-yellow-500/20 text-yellow-300 text-xs rounded">Erratic/No Lineal</span>
+                                </div>
+                                <p class="text-sm text-gray-400 mb-3">Red neuronal simple con Resilient Backpropagation para capturar variaciones extremas no lineales.</p>
+                                <div class="bg-gray-900 rounded p-3 font-mono text-xs text-green-400">
+                                    Arquitectura: [Input:5] → [H:8] → [Out:1]<br>
+                                    Activation: LeakyReLU | Optimizer: Rprop
+                                </div>
+                                <div class="mt-3 flex items-center text-xs text-gray-500">
+                                    <i class="fas fa-check-circle text-green-500 mr-2"></i>
+                                    <span>Asignado to 124 SKUs</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mt-6 glass-panel rounded-lg p-4">
+                            <h3 class="font-semibold mb-3">Matriz de Decisión Automática</h3>
+                            <div class="overflow-x-auto">
+                                <table class="w-full text-sm">
+                                    <thead class="text-gray-400 border-b border-gray-700">
+                                        <tr>
+                                            <th class="pb-2 text-left">Cuadrante</th>
+                                            <th class="pb-2 text-left">Características</th>
+                                            <th class="pb-2 text-left">Modelo Seleccionado</th>
+                                            <th class="pb-2 text-left">Justificación</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-gray-800">
+                                        <tr class="hover:bg-gray-800/50">
+                                            <td class="py-3 font-medium text-green-400">Smooth</td>
+                                            <td class="py-3 text-gray-400">ADI ≤ 1.32, CV² ≤ 0.49</td>
+                                            <td class="py-3">SBA</td>
+                                            <td class="py-3 text-xs text-gray-500">Demanda regular, baja variación</td>
+                                        </tr>
+                                        <tr class="hover:bg-gray-800/50">
+                                            <td class="py-3 font-medium text-yellow-400">Erratic</td>
+                                            <td class="py-3 text-gray-400">ADI ≤ 1.32, CV² > 0.49</td>
+                                            <td class="py-3">Rprop NN</td>
+                                            <td class="py-3 text-xs text-gray-500">Alta variación, requiere captura no lineal</td>
+                                        </tr>
+                                        <tr class="hover:bg-gray-800/50">
+                                            <td class="py-3 font-medium text-blue-400">Intermittent</td>
+                                            <td class="py-3 text-gray-400">ADI > 1.32, CV² ≤ 0.49</td>
+                                            <td class="py-3">SBA/TSB</td>
+                                            <td class="py-3 text-xs text-gray-500">Demanda esporádica predecible</td>
+                                        </tr>
+                                        <tr class="hover:bg-gray-800/50">
+                                            <td class="py-3 font-medium text-red-400">Lumpy</td>
+                                            <td class="py-3 text-gray-400">ADI > 1.32, CV² > 0.49</td>
+                                            <td class="py-3">TSB-HB</td>
+                                            <td class="py-3 text-xs text-gray-500">Demanda irregular, información compartida</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- View: Demand Sensing -->
+                <div id="view-sensing" class="hidden space-y-6 animate-fade-in">
+                    <div class="glass-panel rounded-xl p-6">
+                        <h2 class="text-2xl font-bold mb-6">Demand Sensing - Ajuste en Tiempo Real</h2>
+                        
+                        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+                            <div class="lg:col-span-2">
+                                <div class="bg-gray-800/50 rounded-lg p-4 h-full">
+                                    <h3 class="font-semibold mb-4 flex items-center">
+                                        <i class="fas fa-wave-square text-blue-400 mr-2"></i>
+                                        Nowcasting (Horizonte 0-4 semanas)
+                                    </h3>
+                                    <canvas id="nowcastChart" height="200"></canvas>
+                                </div>
+                            </div>
+                            
+                            <div class="space-y-4">
+                                <div class="bg-gray-800/50 rounded-lg p-4 border-l-4 border-blue-500">
+                                    <h4 class="font-semibold text-sm mb-2">Señales Externas Activas</h4>
+                                    <div class="space-y-3">
+                                        <div class="flex items-center justify-between text-sm">
+                                            <span class="text-gray-400">Clima (Lluvias)</span>
+                                            <span class="text-blue-400 font-mono">+15% demanda</span>
+                                        </div>
+                                        <div class="w-full bg-gray-700 h-1 rounded-full">
+                                            <div class="bg-blue-500 h-1 rounded-full" style="width: 75%"></div>
+                                        </div>
+                                        
+                                        <div class="flex items-center justify-between text-sm">
+                                            <span class="text-gray-400">Promoción Competidor</span>
+                                            <span class="text-red-400 font-mono">-8% demanda</span>
+                                        </div>
+                                        <div class="w-full bg-gray-700 h-1 rounded-full">
+                                            <div class="bg-red-500 h-1 rounded-full" style="width: 45%"></div>
+                                        </div>
+                                        
+                                        <div class="flex items-center justify-between text-sm">
+                                            <span class="text-gray-400">Tendencia Social (Viral)</span>
+                                            <span class="text-green-400 font-mono">+32% demanda</span>
+                                        </div>
+                                        <div class="w-full bg-gray-700 h-1 rounded-full">
+                                            <div class="bg-green-500 h-1 rounded-full" style="width: 92%"></div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="bg-gray-800/50 rounded-lg p-4">
+                                    <h4 class="font-semibold text-sm mb-3">Fuentes de Datos</h4>
+                                    <div class="grid grid-cols-2 gap-2 text-xs">
+                                        <div class="flex items-center space-x-2 p-2 bg-gray-900 rounded">
+                                            <i class="fas fa-cloud-sun text-yellow-400"></i>
+                                            <span>OpenWeather API</span>
+                                        </div>
+                                        <div class="flex items-center space-x-2 p-2 bg-gray-900 rounded">
+                                            <i class="fas fa-hashtag text-pink-400"></i>
+                                            <span>Twitter/X API</span>
+                                        </div>
+                                        <div class="flex items-center space-x-2 p-2 bg-gray-900 rounded">
+                                            <i class="fas fa-calendar-alt text-purple-400"></i>
+                                            <span>Google Calendar</span>
+                                        </div>
+                                        <div class="flex items-center space-x-2 p-2 bg-gray-900 rounded">
+                                            <i class="fas fa-newspaper text-blue-400"></i>
+                                            <span>NewsAPI</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="bg-gradient-to-r from-blue-900/20 to-purple-900/20 rounded-lg p-6 border border-blue-500/20">
+                            <h3 class="font-semibold mb-4">Ajuste Dinámico de Pronóstico</h3>
+                            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                                <div class="text-center">
+                                    <div class="text-3xl font-bold text-gray-400 mb-1" id="base-forecast">1,240</div>
+                                    <div class="text-xs text-gray-500">Pronóstico Base</div>
+                                </div>
+                                <div class="text-center flex items-center justify-center">
+                                    <i class="fas fa-plus text-gray-600"></i>
+                                </div>
+                                <div class="text-center">
+                                    <div class="text-3xl font-bold text-green-400 mb-1" id="sensing-adjustment">+186</div>
+                                    <div class="text-xs text-gray-500">Ajuste Sensing</div>
+                                </div>
+                                <div class="text-center bg-blue-600/20 rounded-lg p-2 border border-blue-500/30">
+                                    <div class="text-3xl font-bold text-blue-400 mb-1" id="final-forecast">1,426</div>
+                                    <div class="text-xs text-blue-300">Pronóstico Ajustado</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- View: Monte Carlo -->
+                <div id="view-montecarlo" class="hidden space-y-6 animate-fade-in">
+                    <div class="glass-panel rounded-xl p-6">
+                        <h2 class="text-2xl font-bold mb-6">Simulación Monte Carlo - Optimización (R,s,Q)</h2>
+                        
+                        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+                            <div class="lg:col-span-2">
+                                <div class="bg-gray-800/50 rounded-lg p-4">
+                                    <h3 class="font-semibold mb-4">Distribución de Costos Totales (500 Escenarios)</h3>
+                                    <canvas id="monteCarloChart" height="250"></canvas>
+                                </div>
+                            </div>
+                            
+                            <div class="space-y-4">
+                                <div class="bg-gray-800/50 rounded-lg p-4">
+                                    <h4 class="font-semibold text-sm mb-3">Parámetros de Política Óptima</h4>
+                                    <div class="space-y-3">
+                                        <div class="flex justify-between items-center p-2 bg-gray-900 rounded">
+                                            <span class="text-sm text-gray-400">Punto de Reorden (R)</span>
+                                            <span class="font-mono font-bold text-blue-400" id="optimal-r">145</span>
+                                        </div>
+                                        <div class="flex justify-between items-center p-2 bg-gray-900 rounded">
+                                            <span class="text-sm text-gray-400">Nivel de Seguridad (s)</span>
+                                            <span class="font-mono font-bold text-purple-400" id="optimal-s">45</span>
+                                        </div>
+                                        <div class="flex justify-between items-center p-2 bg-gray-900 rounded">
+                                            <span class="text-sm text-gray-400">Cantidad Óptima (Q)</span>
+                                            <span class="font-mono font-bold text-green-400" id="optimal-q">320</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="bg-gray-800/50 rounded-lg p-4 border border-yellow-500/30">
+                                    <h4 class="font-semibold text-sm mb-2 text-yellow-400">Optimización</h4>
+                                    <p class="text-xs text-gray-400 mb-2">Minimizando percentil 75 del costo total:</p>
+                                    <div class="text-2xl font-bold text-yellow-400 mb-1">$12,450</div>
+                                    <div class="text-xs text-gray-500">vs $18,230 (política actual)</div>
+                                    <div class="mt-2 text-xs text-green-400">
+                                        <i class="fas fa-arrow-down mr-1"></i>
+                                        31.7% de reducción
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div class="bg-gray-800/30 rounded-lg p-4 text-center">
+                                <div class="text-sm text-gray-400 mb-1">Costo Almacenamiento</div>
+                                <div class="text-xl font-bold text-blue-400">$4,200</div>
+                                <div class="text-xs text-gray-600 mt-1">P75 escenarios</div>
+                            </div>
+                            <div class="bg-gray-800/30 rounded-lg p-4 text-center">
+                                <div class="text-sm text-gray-400 mb-1">Costo Quiebre Stock</div>
+                                <div class="text-xl font-bold text-red-400">$1,850</div>
+                                <div class="text-xs text-gray-600 mt-1">P75 escenarios</div>
+                            </div>
+                            <div class="bg-gray-800/30 rounded-lg p-4 text-center">
+                                <div class="text-sm text-gray-400 mb-1">Costo Pedidos</div>
+                                <div class="text-xl font-bold text-purple-400">$6,400</div>
+                                <div class="text-xs text-gray-600 mt-1">P75 escenarios</div>
+                            </div>
+                        </div>
+
+                        <div class="mt-6 bg-gray-800/50 rounded-lg p-4">
+                            <h4 class="font-semibold mb-3">Análisis de Sensibilidad</h4>
+                            <div class="space-y-2">
+                                <div class="flex items-center space-x-4">
+                                    <span class="text-xs text-gray-400 w-24">Lead Time +20%</span>
+                                    <div class="flex-1 bg-gray-700 h-2 rounded-full overflow-hidden">
+                                        <div class="bg-red-500 h-full" style="width: 85%"></div>
+                                    </div>
+                                    <span class="text-xs text-red-400">+12.4% costo</span>
+                                </div>
+                                <div class="flex items-center space-x-4">
+                                    <span class="text-xs text-gray-400 w-24">Demanda -15%</span>
+                                    <div class="flex-1 bg-gray-700 h-2 rounded-full overflow-hidden">
+                                        <div class="bg-yellow-500 h-full" style="width: 65%"></div>
+                                    </div>
+                                    <span class="text-xs text-yellow-400">+8.2% costo</span>
+                                </div>
+                                <div class="flex items-center space-x-4">
+                                    <span class="text-xs text-gray-400 w-24">Service Level 95%</span>
+                                    <div class="flex-1 bg-gray-700 h-2 rounded-full overflow-hidden">
+                                        <div class="bg-green-500 h-full" style="width: 45%"></div>
+                                    </div>
+                                    <span class="text-xs text-green-400">Óptimo</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- View: Execution -->
+                <div id="view-execution" class="hidden space-y-6 animate-fade-in">
+                    <div class="glass-panel rounded-xl p-6">
+                        <div class="flex justify-between items-center mb-6">
+                            <div>
+                                <h2 class="text-2xl font-bold">Tablero de Ejecución</h2>
+                                <p class="text-gray-400 text-sm">Recomendaciones de compra generadas: <span id="last-update" class="text-blue-400">Hace 5 minutos</span></p>
+                            </div>
+                            <div class="flex space-x-2">
+                                <button onclick="refreshRecommendations()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm font-medium transition-colors flex items-center space-x-2">
+                                    <i class="fas fa-sync-alt"></i>
+                                    <span>Actualizar</span>
+                                </button>
+                                <button class="px-4 py-2 bg-green-600 hover:bg-green-700 rounded-lg text-sm font-medium transition-colors flex items-center space-x-2">
+                                    <i class="fas fa-file-export"></i>
+                                    <span>Exportar POs</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="mb-6 flex space-x-2 overflow-x-auto pb-2">
+                            <button onclick="filterExecution('all')" class="px-4 py-2 bg-blue-600 rounded-lg text-sm font-medium whitespace-nowrap">Todas</button>
+                            <button onclick="filterExecution('critical')" class="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm font-medium whitespace-nowrap text-red-400 border border-red-500/30">
+                                Críticas <span class="ml-1 bg-red-500 text-white text-xs px-2 py-0.5 rounded-full">12</span>
+                            </button>
+                            <button onclick="filterExecution('review')" class="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm font-medium whitespace-nowrap text-yellow-400 border border-yellow-500/30">
+                                Revisar <span class="ml-1 bg-yellow-500 text-black text-xs px-2 py-0.5 rounded-full">28</span>
+                            </button>
+                            <button onclick="filterExecution('optimized')" class="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm font-medium whitespace-nowrap text-green-400 border border-green-500/30">
+                                Optimizadas <span class="ml-1 bg-green-500 text-white text-xs px-2 py-0.5 rounded-full">156</span>
+                            </button>
+                        </div>
+
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left">
+                                <thead class="text-gray-400 text-xs uppercase tracking-wider border-b border-gray-700">
+                                    <tr>
+                                        <th class="pb-3 pl-4">Prioridad</th>
+                                        <th class="pb-3">SKU</th>
+                                        <th class="pb-3">Producto</th>
+                                        <th class="pb-3">Ubicación</th>
+                                        <th class="pb-3">Stock</th>
+                                        <th class="pb-3">Sugerido</th>
+                                        <th class="pb-3">Proveedor</th>
+                                        <th class="pb-3">Impacto $</th>
+                                        <th class="pb-3">Acción</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="text-sm divide-y divide-gray-800" id="execution-table">
+                                    <!-- Populated by JS -->
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div class="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div class="glass-panel rounded-lg p-4 border-l-4 border-blue-500">
+                                <h4 class="font-semibold text-sm mb-2">Tasa de Aceptación</h4>
+                                <div class="flex items-end space-x-2">
+                                    <span class="text-3xl font-bold text-blue-400">87%</span>
+                                    <span class="text-sm text-gray-400 mb-1">últimos 7 días</span>
+                                </div>
+                                <div class="mt-2 h-2 bg-gray-700 rounded-full overflow-hidden">
+                                    <div class="h-full bg-blue-500 w-[87%]"></div>
+                                </div>
+                            </div>
+                            
+                            <div class="glass-panel rounded-lg p-4 border-l-4 border-green-500">
+                                <h4 class="font-semibold text-sm mb-2">Tiempo de Respuesta</h4>
+                                <div class="flex items-end space-x-2">
+                                    <span class="text-3xl font-bold text-green-400">2.4h</span>
+                                    <span class="text-sm text-gray-400 mb-1">promedio</span>
+                                </div>
+                                <p class="text-xs text-gray-500 mt-2">Desde alerta hasta orden generada</p>
+                            </div>
+
+                            <div class="glass-panel rounded-lg p-4 border-l-4 border-purple-500">
+                                <h4 class="font-semibold text-sm mb-2">Valor Órdenes Hoy</h4>
+                                <div class="flex items-end space-x-2">
+                                    <span class="text-3xl font-bold text-purple-400">$284K</span>
+                                    <span class="text-sm text-gray-400 mb-1">196 líneas</span>
+                                </div>
+                                <p class="text-xs text-gray-500 mt-2">Ahorro estimado: $42K</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </main>
+        </div>
+    </div>
+
+    <script>
+        // Global State
+        let currentView = 'dashboard';
+        let inventoryData = [];
+        let charts = {};
+
+        // Initialize Application
+        document.addEventListener('DOMContentLoaded', function() {
+            generateMockData();
+            initializeCharts();
+            populateCriticalAlerts();
+            populateExecutionTable();
+            updateDiagnosticCharts();
+            runMonteCarloSimulation();
+        });
+
+        // View Switching
+        function switchView(viewName) {
+            // Hide all views
+            document.querySelectorAll('[id^="view-"]').forEach(el => {
+                el.classList.add('hidden');
+            });
+            
+            // Show selected view
+            document.getElementById(`view-${viewName}`).classList.remove('hidden');
+            
+            // Update navigation
+            document.querySelectorAll('nav button').forEach(btn => {
+                btn.classList.remove('bg-blue-600/20', 'border-blue-500/30', 'text-blue-400');
+                btn.classList.add('text-gray-400');
+            });
+            
+            const activeBtn = document.getElementById(`nav-${viewName}`);
+            activeBtn.classList.remove('text-gray-400');
+            activeBtn.classList.add('bg-blue-600/20', 'border', 'border-blue-500/30', 'text-blue-400');
+            
+            currentView = viewName;
+            
+            // Trigger specific initializations
+            if (viewName === 'montecarlo') {
+                setTimeout(runMonteCarloSimulation, 100);
+            }
+        }
+
+        // Generate Realistic Mock Data
+        function generateMockData() {
+            const categories = ['Electronics', 'Automotive', 'Pharma', 'Retail'];
+            const suppliers = ['TechCorp', 'AutoParts SA', 'MedSupply', 'GlobalRetail'];
+            
+            for (let i = 0; i < 200; i++) {
+                const adi = Math.random() * 3 + 0.5;
+                const cv2 = Math.random() * 1.5 + 0.1;
+                let quadrant;
+                
+                if (adi <= 1.32 && cv2 <= 0.49) quadrant = 'Smooth';
+                else if (adi <= 1.32 && cv2 > 0.49) quadrant = 'Erratic';
+                else if (adi > 1.32 && cv2 <= 0.49) quadrant = 'Intermittent';
+                else quadrant = 'Lumpy';
+                
+                const margin = Math.random() * 1000 + 50;
+                const abcClass = margin > 800 ? 'A' : margin > 400 ? 'B' : 'C';
+                
+                inventoryData.push({
+                    sku: `SKU-${1000 + i}`,
+                    name: `Product ${i + 1}`,
+                    category: categories[Math.floor(Math.random() * categories.length)],
+                    supplier: suppliers[Math.floor(Math.random() * suppliers.length)],
+                    adi: adi,
+                    cv2: cv2,
+                    quadrant: quadrant,
+                    abcClass: abcClass,
+                    currentStock: Math.floor(Math.random() * 500),
+                    avgDemand: Math.floor(Math.random() * 100) + 10,
+                    leadTime: Math.floor(Math.random() * 14) + 2,
+                    unitCost: Math.random() * 100 + 10,
+                    margin: margin
+                });
+            }
+        }
+
+        // Initialize Charts
+        function initializeCharts() {
+            // Quadrant Distribution Chart
+            const quadrantCtx = document.getElementById('quadrantChart').getContext('2d');
+            charts.quadrant = new Chart(quadrantCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Smooth', 'Erratic', 'Intermittent', 'Lumpy'],
+                    datasets: [{
+                        data: [45, 30, 35, 90],
+                        backgroundColor: ['#10b981', '#f59e0b', '#3b82f6', '#ef4444'],
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            labels: { color: '#9ca3af' }
+                        }
+                    }
+                }
+            });
+
+            // Accuracy Comparison Chart
+            const accuracyCtx = document.getElementById('accuracyChart').getContext('2d');
+            charts.accuracy = new Chart(accuracyCtx, {
+                type: 'line',
+                data: {
+                    labels: ['Sem 1', 'Sem 2', 'Sem 3', 'Sem 4', 'Sem 5', 'Sem 6'],
+                    datasets: [{
+                        label: 'SBA',
+                        data: [82, 83, 81, 84, 83, 85],
+                        borderColor: '#3b82f6',
+                        tension: 0.4
+                    }, {
+                        label: 'Red Neuronal Rprop',
+                        data: [85, 87, 89, 91, 92, 94],
+                        borderColor: '#8b5cf6',
+                        tension: 0.4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false,
+                    },
+                    plugins: {
+                        legend: {
+                            labels: { color: '#9ca3af' }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            grid: { color: '#374151' },
+                            ticks: { color: '#9ca3af' }
+                        },
+                        x: {
+                            grid: { color: '#374151' },
+                            ticks: { color: '#9ca3af' }
+                        }
+                    }
+                }
+            });
+
+            // Nowcasting Chart
+            const nowcastCtx = document.getElementById('nowcastChart').getContext('2d');
+            charts.nowcast = new Chart(nowcastCtx, {
+                type: 'bar',
+                data: {
+                    labels: ['Semana Actual', '+1 Sem', '+2 Sem', '+3 Sem', '+4 Sem'],
+                    datasets: [{
+                        label: 'Pronóstico Base',
+                        data: [1200, 1150, 1180, 1220, 1190],
+                        backgroundColor: '#3b82f6',
+                        borderRadius: 4
+                    }, {
+                        label: 'Ajuste Sensing',
+                        data: [0, 180, 160, 140, 120],
+                        backgroundColor: '#10b981',
+                        borderRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: { stacked: true, ticks: { color: '#9ca3af' }, grid: { color: '#374151' } },
+                        y: { stacked: true, ticks: { color: '#9ca3af' }, grid: { color: '#374151' } }
+                    },
+                    plugins: {
+                        legend: { labels: { color: '#9ca3af' } }
+                    }
+                }
+            });
+        }
+
+        // Populate Critical Alerts Table
+        function populateCriticalAlerts() {
+            const table = document.getElementById('critical-alerts-table');
+            const criticalItems = inventoryData
+                .filter(item => item.abcClass === 'A')
+                .slice(0, 8)
+                .map(item => ({
+                    ...item,
+                    daysCover: Math.floor(item.currentStock / (item.avgDemand / 7)),
+                    risk: item.currentStock < item.avgDemand ? 'Alto' : 'Medio'
+                }));
+
+            table.innerHTML = criticalItems.map(item => `
+                <tr class="hover:bg-gray-800/50 transition-colors border-b border-gray-800">
+                    <td class="py-3 font-mono text-blue-400">${item.sku}</td>
+                    <td class="py-3">${item.name}</td>
+                    <td class="py-3"><span class="px-2 py-1 bg-green-500/20 text-green-400 rounded text-xs font-bold">${item.abcClass}</span></td>
+                    <td class="py-3 font-mono">${item.currentStock}</td>
+                    <td class="py-3 text-gray-400">${item.avgDemand}/sem</td>
+                    <td class="py-3">
+                        <div class="flex items-center">
+                            <div class="w-16 bg-gray-700 h-2 rounded-full mr-2 overflow-hidden">
+                                <div class="bg-${item.daysCover < 7 ? 'red' : 'yellow'}-500 h-full rounded-full" style="width: ${Math.min(item.daysCover * 10, 100)}%"></div>
+                            </div>
+                            <span class="text-xs">${item.daysCover} días</span>
+                        </div>
+                    </td>
+                    <td class="py-3">
+                        <span class="px-2 py-1 rounded text-xs ${item.risk === 'Alto' ? 'bg-red-500/20 text-red-400' : 'bg-yellow-500/20 text-yellow-400'}">
+                            ${item.risk}
+                        </span>
+                    </td>
+                    <td class="py-3">
+                        <button class="text-blue-400 hover:text-blue-300 text-xs underline">Ordenar ${Math.max(item.avgDemand * 2 - item.currentStock, 50)} uds</button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        // Update Diagnostic Scatter Plot
+        function updateDiagnosticCharts() {
+            const svg = document.getElementById('scatter-plot');
+            const counts = { Smooth: 0, Erratic: 0, Intermittent: 0, Lumpy: 0 };
+            
+            // Clear existing
+            svg.innerHTML = '';
+            
+            // Plot points
+            inventoryData.forEach((item, idx) => {
+                if (idx % 3 === 0) { // Sample for performance
+                    const x = (item.adi / 4) * 100; // Scale to percentage
+                    const y = 100 - (item.cv2 / 2) * 100; // Invert Y
+                    
+                    const color = item.quadrant === 'Smooth' ? '#10b981' :
+                                 item.quadrant === 'Erratic' ? '#f59e0b' :
+                                 item.quadrant === 'Intermittent' ? '#3b82f6' : '#ef4444';
+                    
+                    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                    circle.setAttribute('cx', `${Math.min(x, 95)}%`);
+                    circle.setAttribute('cy', `${Math.max(y, 5)}%`);
+                    circle.setAttribute('r', item.abcClass === 'A' ? '6' : '3');
+                    circle.setAttribute('fill', color);
+                    circle.setAttribute('opacity', '0.7');
+                    circle.setAttribute('class', 'hover:opacity-100 transition-opacity cursor-pointer');
+                    
+                    // Tooltip
+                    const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+                    title.textContent = `${item.sku}: ADI=${item.adi.toFixed(2)}, CV²=${item.cv2.toFixed(2)}`;
+                    circle.appendChild(title);
+                    
+                    svg.appendChild(circle);
+                    counts[item.quadrant]++;
+                }
+            });
+            
+            // Update counts
+            document.getElementById('count-smooth').textContent = counts.Smooth;
+            document.getElementById('count-erratic').textContent = counts.Erratic;
+            document.getElementById('count-intermittent').textContent = counts.Intermittent;
+            document.getElementById('count-lumpy').textContent = counts.Lumpy;
+        }
+
+        // Monte Carlo Simulation
+        function runMonteCarloSimulation() {
+            const scenarios = 500;
+            const costs = [];
+            
+            // Simulate demand and lead time variations
+            for (let i = 0; i < scenarios; i++) {
+                const demand = 1000 + (Math.random() - 0.5) * 400; // Normal around 1000, sd=200
+                const leadTime = 7 + (Math.random() - 0.5) * 4;
+                
+                const holdingCost = Math.max(0, (320 - demand * leadTime / 30)) * 0.25;
+                const stockoutCost = demand > 400 ? (demand - 400) * 2 : 0;
+                const orderingCost = 50;
+                
+                costs.push(holdingCost + stockoutCost + orderingCost);
+            }
+            
+            costs.sort((a, b) => a - b);
+            const p75 = costs[Math.floor(scenarios * 0.75)];
+            
+            // Create histogram
+            const bins = 20;
+            const histogram = new Array(bins).fill(0);
+            const min = Math.min(...costs);
+            const max = Math.max(...costs);
+            const binWidth = (max - min) / bins;
+            
+            costs.forEach(cost => {
+                const binIndex = Math.min(Math.floor((cost - min) / binWidth), bins - 1);
+                histogram[binIndex]++;
+            });
+            
+            // Update or create chart
+            const ctx = document.getElementById('monteCarloChart');
+            if (charts.monteCarlo) {
+                charts.monteCarlo.destroy();
+            }
+            
+            charts.monteCarlo = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: histogram.map((_, i) => `$${Math.round(min + i * binWidth)}`),
+                    datasets: [{
+                        label: 'Frecuencia',
+                        data: histogram,
+                        backgroundColor: histogram.map((_, i) => {
+                            const binValue = min + i * binWidth;
+                            return binValue > p75 ? '#ef4444' : '#3b82f6';
+                        }),
+                        borderRadius: 2
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        annotation: {
+                            annotations: {
+                                line1: {
+                                    type: 'line',
+                                    xMin: Math.floor((p75 - min) / binWidth),
+                                    xMax: Math.floor((p75 - min) / binWidth),
+                                    borderColor: '#f59e0b',
+                                    borderWidth: 2,
+                                    label: {
+                                        content: 'P75',
+                                        enabled: true
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            grid: { color: '#374151' },
+                            ticks: { color: '#9ca3af' }
+                        },
+                        x: {
+                            grid: { display: false },
+                            ticks: { color: '#9ca3af', maxTicksLimit: 10 }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Populate Execution Table
+        function populateExecutionTable() {
+            const table = document.getElementById('execution-table');
+            const recommendations = inventoryData
+                .filter(item => item.currentStock < item.avgDemand * 2)
+                .slice(0, 10)
+                .map(item => ({
+                    ...item,
+                    suggestedQty: Math.max(item.avgDemand * 3 - item.currentStock, 50),
+                    priority: item.abcClass === 'A' ? 'critical' : item.abcClass === 'B' ? 'review' : 'optimized'
+                }));
+
+            table.innerHTML = recommendations.map(item => `
+                <tr class="hover:bg-gray-800/50 transition-colors group" data-priority="${item.priority}">
+                    <td class="py-3 pl-4">
+                        <span class="w-2 h-2 rounded-full inline-block mr-2 ${item.priority === 'critical' ? 'bg-red-500 animate-pulse' : item.priority === 'review' ? 'bg-yellow-500' : 'bg-green-500'}"></span>
+                        <span class="capitalize text-xs">${item.priority}</span>
+                    </td>
+                    <td class="py-3 font-mono text-blue-400">${item.sku}</td>
+                    <td class="py-3">${item.name}</td>
+                    <td class="py-3 text-gray-400">CD-Norte</td>
+                    <td class="py-3 font-mono ${item.currentStock < 50 ? 'text-red-400' : 'text-gray-300'}">${item.currentStock}</td>
+                    <td class="py-3 font-bold text-green-400">${item.suggestedQty}</td>
+                    <td class="py-3 text-gray-400">${item.supplier}</td>
+                    <td class="py-3 text-gray-300">$${(item.suggestedQty * item.unitCost).toLocaleString()}</td>
+                    <td class="py-3">
+                        <div class="flex space-x-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button class="p-1 bg-green-600/20 text-green-400 rounded hover:bg-green-600/30" title="Aprobar">
+                                <i class="fas fa-check"></i>
+                            </button>
+                            <button class="p-1 bg-yellow-600/20 text-yellow-400 rounded hover:bg-yellow-600/30" title="Modificar">
+                                <i class="fas fa-edit"></i>
+                            </button>
+                            <button class="p-1 bg-red-600/20 text-red-400 rounded hover:bg-red-600/30" title="Rechazar">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        // Filter Execution Table
+        function filterExecution(type) {
+            const rows = document.querySelectorAll('#execution-table tr');
+            rows.forEach(row => {
+                if (type === 'all' || row.dataset.priority === type) {
+                    row.style.display = '';
+                } else {
+                    row.style.display = 'none';
+                }
+            });
+        }
+
+        // Refresh Recommendations
+        function refreshRecommendations() {
+            const btn = document.querySelector('button[onclick="refreshRecommendations()"] i');
+            btn.classList.add('fa-spin');
+            
+            setTimeout(() => {
+                btn.classList.remove('fa-spin');
+                populateExecutionTable();
+                document.getElementById('last-update').textContent = 'Justo ahora';
+            }, 1000);
+        }
+
+        // Simulate real-time updates
+        setInterval(() => {
+            // Randomly update one KPI
+            const kpi = document.getElementById('kpi-accuracy');
+            const current = parseFloat(kpi.textContent);
+            const variation = (Math.random() - 0.5) * 0.2;
+            kpi.textContent = (current + variation).toFixed(1) + '%';
+        }, 5000);
+    </script>
+</body>
+</html>

@@ -1,0 +1,25 @@
+### Health
+GET http://127.0.0.1:8010/health
+
+### Run one SKU (force)
+POST http://127.0.0.1:8010/mc/sku/M524-100L
+Content-Type: application/json
+
+{
+  "n_sims": 8000,
+  "review_days": 30,
+  "force": true
+}
+
+### Batch run (prioridad alta primero)
+POST http://127.0.0.1:8010/mc/run
+Content-Type: application/json
+
+{
+  "n_sims": 8000,
+  "review_days": 30,
+  "min_priority": 8
+}
+
+### Cache
+GET http://127.0.0.1:8010/mc/cache/M524-100L

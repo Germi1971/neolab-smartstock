@@ -54,6 +54,13 @@ export function useSKUCache(
       }
 
       setError(null);
+      // 🔒 Guard: si el caller pasó algo que no es función, evitamos el crash
+      if (typeof fetchFn !== 'function') {
+        setError('Configuración inválida: fetchFn no es una función (revisar apiClient.getSKUDetail)');
+        setIsLoading(false);
+        isBackgroundRefresh.current = false;
+        return;
+      }
 
       try {
         const result = await fetchFn(sku);

@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Env
+.env
+.env.*
+
+# Logs
+*.log
+
+# Dumps
+*.sql.gz
+*.zip
+*.tar.gz
+
+# OS
+.DS_Store
+Thumbs.db

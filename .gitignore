@@ -1,0 +1,22 @@
+# Env y secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+backend/venv/
+
+# Node
+node_modules/
+
+# Build / logs
+dist/
+build/
+*.log
+*.zip

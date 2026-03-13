@@ -7,12 +7,20 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+import sys
+
+# Asegurar que el directorio raíz esté en el path para resolver imports de 'backend.'
+try:
+    import backend.db.database
+except ImportError:
+    # Si falla, estamos probablemente dentro de la carpeta /backend/
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from backend.db.database import init_db, close_db
 from backend.jobs.scheduler import init_scheduler, shutdown_scheduler
 from backend.utils.logger import get_logger, configure_logging
-
-# Import routers
-from backend.routers import health
+from backend.api.ml import router as ml_router
+from backend.routers import health, dashboard, api
 
 logger = get_logger(__name__)
 
@@ -60,7 +68,7 @@ app = FastAPI(
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv("CORS_ORIGINS", "*").split(","),
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -68,6 +76,9 @@ app.add_middleware(
 
 # Include routers
 app.include_router(health.router)
+app.include_router(dashboard.router)
+app.include_router(api.router)
+app.include_router(ml_router)
 
 
 @app.get("/")

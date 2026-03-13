@@ -61,32 +61,23 @@ class MLPipeline:
         result = await self.session.execute(
             text("""
                 SELECT 
-                    fecha,
-                    cantidad
-                FROM demand_history
-                WHERE sku = :sku
-                AND fecha >= DATE_SUB(CURDATE(), INTERVAL 24 MONTH)
-                ORDER BY fecha
+                    Fecha as fecha,
+                    Qty as cantidad
+                FROM v_hist_ventas
+                WHERE SKU = :sku
+                AND Fecha >= DATE_SUB(CURDATE(), INTERVAL 24 MONTH)
+                ORDER BY Fecha
             """),
             {"sku": sku}
         )
         
         rows = result.fetchall()
         
-        if not rows:
-            # No data - return default features
-            return {
-                "has_data": False,
-                "dias_observados_12m": 0,
-                "eventos_12m": 0,
-                "unidades_12m": 0,
-                "cv_12m": 0,
-                "lambda_eventos_mes_12m": 0
-            }
+        # Determine dormancy (no sales in last 24 months)
+        is_dormant = len(rows) == 0
         
         # Calculate features (simplified)
         from datetime import date
-        
         today = date.today()
         
         # 12 month window
@@ -95,22 +86,22 @@ class MLPipeline:
         unidades_12m = sum(r[1] for r in window_12m)
         
         # Calculate CV
+        cv_12m = 0
         if eventos_12m > 1:
             import numpy as np
             values = [r[1] for r in window_12m if r[1] > 0]
-            cv_12m = float(np.std(values) / np.mean(values)) if np.mean(values) > 0 else 0
-        else:
-            cv_12m = 0
-        
+            cv_12m = np.std(values) / np.mean(values) if np.mean(values) > 0 else 0
+            
         features = {
-            "has_data": True,
-            "dias_observados_12m": len(window_12m),
+            "has_data": len(rows) > 0,
+            "is_dormant": is_dormant,
+            "dias_observados_12m": 365, # Assuming 365 days in the window
             "eventos_12m": eventos_12m,
             "unidades_12m": unidades_12m,
             "cv_12m": cv_12m,
-            "lambda_eventos_mes_12m": eventos_12m / 12 if eventos_12m > 0 else 0,
-            "ultima_venta": max(r[0] for r in rows),
-            "dias_desde_ultima_venta": (today - max(r[0] for r in rows)).days
+            "lambda_eventos_mes_12m": eventos_12m / 12.0 if eventos_12m > 0 else 0,
+            "ultima_venta": max(r[0] for r in rows) if rows else None,
+            "dias_desde_ultima_venta": (today - max(r[0] for r in rows)).days if rows else None
         }
         
         # Store features
@@ -124,7 +115,7 @@ class MLPipeline:
         
         await self.session.execute(
             text("""
-                INSERT INTO ml_sku_features (
+                INSERT INTO ss_ml_sku_features (
                     run_id, sku, periodo_inicio, periodo_fin,
                     dias_observados_12m, eventos_12m, unidades_12m,
                     cv_12m, lambda_eventos_mes_12m,
@@ -160,7 +151,6 @@ class MLPipeline:
                 "dias_desde": features.get("dias_desde_ultima_venta", 0)
             }
         )
-        await self.session.commit()
     
     async def _select_model(self, sku: str, features: Dict[str, Any]) -> Dict[str, Any]:
         """Select the best model for a SKU."""
@@ -186,7 +176,7 @@ class MLPipeline:
         # Store model selection
         await self.session.execute(
             text("""
-                INSERT INTO ml_model_registry (
+                INSERT INTO ss_ml_model_registry (
                     sku, modelo_actual, fecha_seleccion,
                     run_id_seleccion, score_composite
                 ) VALUES (
@@ -207,7 +197,6 @@ class MLPipeline:
                 "score": 0.8  # Placeholder score
             }
         )
-        await self.session.commit()
         
         return {
             "modelo": modelo,
@@ -218,7 +207,7 @@ class MLPipeline:
         """Generate (s, S) policy for a SKU."""
         # Get parameters
         result = await self.session.execute(
-            text("SELECT stock_seguridad, stock_objetivo FROM sku_parameters WHERE sku = :sku"),
+            text("SELECT stock_min, stock_objetivo, lead_time_dias, z_servicio, criticidad FROM parametros_sku WHERE sku = :sku"),
             {"sku": sku}
         )
         row = result.fetchone()
@@ -226,19 +215,54 @@ class MLPipeline:
         if not row:
             return {"s": 0, "S": 0}
         
-        stock_seguridad = row[0]
-        stock_objetivo = row[1]
+        current_s = row[0] or 0
+        current_S = row[1] or 0
+        lt = row[2] or 30  # default 30 days
+        z = row[3] or 1.65 # default 95%
+        criticidad = row[4] or 'MEDIA'
+
+        # 1. Handle Dormant SKUs (No sales in 24 months)
+        # If a SKU has zero sales events in the last 12 months, suggest 0 regardless of criticality
+        eventos_12m = features.get("eventos_12m", 0)
+        if eventos_12m == 0:
+            logger.info(f"SKU {sku} has zero sales events in 12 months. Suggesting 0.")
+            return {"s": 0, "S": 0}
+        
+        # For truly dormant SKUs (24 months), also suggest 0 unless critical
+        if features.get("is_dormant") and criticidad != 'ALTA':
+            logger.info(f"SKU {sku} is dormant (24 months). Suggesting 0.")
+            return {"s": 0, "S": 0}
+
+        # 2. Basic Statistical Policy for Active Items
+        # Demand per day * Lead Time + Safety Stock
+        u_mes = features.get("unidades_12m", 0) / 12.0
+        u_dia = u_mes / 30.0
+        
+        # Base demand for the lead time
+        lead_time_demand = u_dia * lt
+        
+        # Simple Safety Stock (simplified for now)
+        # In a real scenario we'd use sigma_demand * sqrt(LT) * Z
+        # Here we'll use a 20% buffer if no variability info
+        ss = lead_time_demand * 0.2 * z
+        
+        suggested_s = round(lead_time_demand + ss)
+        suggested_S = round(suggested_s + lead_time_demand) # simplistic S = s + demand_cycle
+
+        # If it's on-demand only (very low demand), but not dormant
+        if suggested_S < 1 and u_mes > 0:
+            suggested_S = 1 # Minimum 1 if it has some sales
         
         return {
-            "s": stock_seguridad,
-            "S": stock_objetivo
+            "s": suggested_s,
+            "S": suggested_S
         }
     
     async def _create_suggestion(self, sku: str, policy: Dict[str, Any]) -> Dict[str, Any]:
         """Create purchase suggestion for a SKU."""
         # Get current stock
         result = await self.session.execute(
-            text("SELECT stock_posicion FROM stock WHERE sku = :sku"),
+            text("SELECT Stock_Posicion_Libre FROM v_stock_estado WHERE SKU = :sku"),
             {"sku": sku}
         )
         row = result.fetchone()
@@ -249,7 +273,7 @@ class MLPipeline:
         
         # Get model
         result = await self.session.execute(
-            text("SELECT modelo_actual FROM ml_model_registry WHERE sku = :sku"),
+            text("SELECT modelo_actual FROM ss_ml_model_registry WHERE sku = :sku"),
             {"sku": sku}
         )
         row = result.fetchone()
@@ -258,19 +282,19 @@ class MLPipeline:
         # Store suggestion
         await self.session.execute(
             text("""
-                INSERT INTO ml_suggestions (
+                INSERT INTO ss_ml_suggestions (
                     run_id, sku, qty_sugerida, estado,
-                    modelo_seleccionado, s_policy, S_policy
+                    modelo_seleccionado, policy_min, policy_max
                 ) VALUES (
                     :run_id, :sku, :qty, 'PENDIENTE',
-                    :modelo, :s, :S
+                    :modelo, :policy_min, :policy_max
                 )
                 ON DUPLICATE KEY UPDATE
                     qty_sugerida = VALUES(qty_sugerida),
                     estado = VALUES(estado),
                     modelo_seleccionado = VALUES(modelo_seleccionado),
-                    s_policy = VALUES(s_policy),
-                    S_policy = VALUES(S_policy),
+                    policy_min = VALUES(policy_min),
+                    policy_max = VALUES(policy_max),
                     updated_at = NOW()
             """),
             {
@@ -278,11 +302,10 @@ class MLPipeline:
                 "sku": sku,
                 "qty": qty_sugerida,
                 "modelo": modelo,
-                "s": policy["s"],
-                "S": policy["S"]
+                "policy_min": policy["s"],
+                "policy_max": policy["S"]
             }
         )
-        await self.session.commit()
         
         return {
             "qty_sugerida": qty_sugerida,
