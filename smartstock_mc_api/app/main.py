@@ -67,6 +67,9 @@ SERVICE_CRITICO = float(os.getenv('SERVICE_CRITICO', '0.95'))
 SERVICE_IMPORTANTE = float(os.getenv('SERVICE_IMPORTANTE', '0.90'))
 SERVICE_NO_CRITICO = float(os.getenv('SERVICE_NO_CRITICO', '0.50'))
 
+# [FIX DOMICILIADO - TRUNCAMIENTO MC] Límite superior de cantidad recomendada (múltiplo de Forecast_m)
+Q_CAP_MULTIPLE = float(os.getenv('Q_CAP_MULTIPLE', '3'))
+
 # Tabla simple para overrides manuales por SKU
 OVERRIDE_TABLE = os.getenv('SKU_OVERRIDE_TABLE', 'sku_service_override')
 
@@ -657,7 +660,12 @@ def compute_one(
     # -----------------------------
     moq = int(row.get("moq") or 1)
     multiplo = int(row.get("multiplo_compra") or 1)
-    q_cap = None  # hoy lo dejamos NULL hasta que lo tengas en dim/vista
+    # [FIX DOMICILIADO - TRUNCAMIENTO MC] Limitar recomendación a Q_CAP_MULTIPLE * Forecast_m
+    q_cap = row.get("q_cap")  # Override por SKU si viene de vista/dim
+    if q_cap is None and forecast_m > 0:
+        q_cap = int(math.ceil(Q_CAP_MULTIPLE * forecast_m))
+        if q_cap < 1:
+            q_cap = 1  # Al menos 1 si hay forecast
 
     # -----------------------------
     # Decisión MC
