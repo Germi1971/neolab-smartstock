@@ -106,6 +106,29 @@ curl "http://localhost:8001/mc/cache/M524-100L"
 
 ---
 
+## Automatización diaria (cron)
+
+Para mantener `sku_obs_12m` y el cache Monte Carlo actualizados cada día:
+
+```bash
+# Hacer ejecutable el script
+chmod +x /home/ubuntu/neolab-smartstock/smartstock_mc_api/deploy/cron-daily.sh
+
+# Editar crontab
+crontab -e
+
+# Añadir línea (ejecuta a las 2:00 AM):
+0 2 * * * /home/ubuntu/neolab-smartstock/smartstock_mc_api/deploy/cron-daily.sh >> /var/log/smartstock-mc-cron.log 2>&1
+```
+
+Crear el archivo de log si no existe:
+```bash
+sudo touch /var/log/smartstock-mc-cron.log
+sudo chown ubuntu:ubuntu /var/log/smartstock-mc-cron.log
+```
+
+---
+
 ## Requisitos previos
 
 - **MySQL** accesible desde Lightsail
