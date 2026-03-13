@@ -232,7 +232,7 @@ def mc_metrics(demand_samples: List[float], stock_posicion: float, service_prob:
 # Decide MC (usa sku_obs_12m ya unido)
 # -----------------------------
 def decide_mc(row: Dict[str, Any]) -> Tuple[bool, str]:
-    activo = int(row.get("activo") or 0)
+    activo = 1 if row.get("activo") is None else int(row.get("activo") or 0)
     if activo != 1:
         return False, "SKU inactivo"
 
@@ -390,7 +390,7 @@ SELECT
   a.sigma_gap_dias
 
 FROM v_analisis_sku_excel_mc a
-WHERE a.activo = 1;
+WHERE COALESCE(a.activo, 1) = 1;
 """
 
 FETCH_ONE_SKU_SQL = """
