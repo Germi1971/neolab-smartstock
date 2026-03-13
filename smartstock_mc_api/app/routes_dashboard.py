@@ -1,7 +1,10 @@
+import csv
+import io
 from typing import Any, Dict, Optional
 
 import pymysql
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 router = APIRouter()
@@ -168,6 +171,69 @@ def dashboard_sugerencias():
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"dashboard/sugerencias error: {str(e)}")
+
+
+@router.get("/dashboard/sugerencias/export")
+def dashboard_sugerencias_export():
+    """
+    Exporta todas las sugerencias como CSV descargable.
+    Usa la misma vista v_sugerencias_compra que el dashboard.
+    """
+    from app.main import cfg, get_conn
+
+    sql = """
+    SELECT
+      sku,
+      producto,
+      proveedor,
+      riesgo,
+      stock_actual,
+      impo_libre,
+      stock_min,
+      stock_objetivo,
+      qty_recomendada,
+      qty_final,
+      costo_unit,
+      impacto_usd,
+      modelo_recomendado,
+      service_prob_usado,
+      review_updated_at
+    FROM v_sugerencias_compra
+    ORDER BY impacto_usd DESC;
+    """
+
+    try:
+        with get_conn(cfg) as conn:
+            with conn.cursor(pymysql.cursors.DictCursor) as cur:
+                cur.execute(sql)
+                rows = cur.fetchall()
+
+        if not rows:
+            rows = [{"sku": "Sin datos", "producto": "", "qty_final": 0}]
+
+        output = io.StringIO()
+        writer = csv.DictWriter(
+            output,
+            fieldnames=list(rows[0].keys()),
+            extrasaction="ignore",
+            lineterminator="\n",
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+
+        # BOM UTF-8 para que Excel abra correctamente acentos
+        content = ("\ufeff" + output.getvalue()).encode("utf-8")
+
+        return StreamingResponse(
+            iter([content]),
+            media_type="text/csv; charset=utf-8",
+            headers={
+                "Content-Disposition": "attachment; filename=sugerencias_smartstock.csv"
+            },
+        )
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Export error: {str(e)}")
 
 
 @router.get("/ml/sku/{sku}")

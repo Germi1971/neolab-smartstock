@@ -3,6 +3,7 @@ import { StockTab } from './pages/StockTab';
 import { ComprasTab } from './pages/ComprasTab';
 import { ParametrosTab } from './pages/ParametrosTab';
 import { MLTab } from './pages/MLTab';
+import { apiClient } from './services/apiClient';
 
 type Tab = 'stock' | 'compras' | 'parametros' | 'ml';
 
@@ -67,6 +68,31 @@ function App() {
               </div>
             </div>
             <div className="flex items-center gap-4">
+              <button
+                onClick={async () => {
+                  try {
+                    const blob = await apiClient.exportPurchaseOrder({ limit: 50000 });
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `sugerencias_smartstock_${new Date().toISOString().split('T')[0]}.csv`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
+                  } catch (err) {
+                    console.error(err);
+                    alert('Error al descargar el reporte');
+                  }
+                }}
+                className="px-3 py-1.5 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 transition-colors flex items-center gap-2"
+                title="Descargar CSV con reporte completo de todos los SKU"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                Descargar reporte CSV
+              </button>
               <div className="text-sm text-gray-500">
                 v2.0.0
               </div>

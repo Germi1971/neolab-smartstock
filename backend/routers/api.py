@@ -900,11 +900,10 @@ async def api_unapprove_suggestion(
 
 @router.get("/purchases/export")
 async def api_export_purchases(
-    response: Response,
     sku: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
-    # CSV simple desde v_sugerencias_compra
+    """Exporta reporte completo de sugerencias como CSV descargable."""
     where = ["1=1"]
     params: dict[str, Any] = {}
     if sku:
@@ -912,32 +911,45 @@ async def api_export_purchases(
         params["sku"] = f"%{sku}%"
     where_sql = " WHERE " + " AND ".join(where)
 
+    # Columnas ampliadas para reporte completo (proveedor, qty_final, modelo si existen)
     sql = text(f"""
       SELECT
         sku,
         producto,
+        COALESCE(proveedor, '') AS proveedor,
         riesgo,
-        qty_recomendada,
         stock_actual,
         stock_min,
         stock_objetivo,
+        qty_recomendada,
+        COALESCE(qty_final, qty_recomendada) AS qty_final,
         costo_unit,
         impacto_usd,
         aprobado,
-        fecha_aprobacion
+        fecha_aprobacion,
+        COALESCE(modelo_recomendado, '') AS modelo_recomendado
       FROM v_sugerencias_compra
       {where_sql}
       ORDER BY impacto_usd DESC
-      LIMIT 10000
+      LIMIT 50000
     """)
-    res = await db.execute(sql, params)
-    rows = res.mappings().all()
+    try:
+        res = await db.execute(sql, params)
+        rows = res.mappings().all()
+    except Exception:
+        # Fallback si proveedor/qty_final/modelo no existen en la vista
+        sql_fb = text(f"""
+          SELECT sku, producto, riesgo, qty_recomendada, stock_actual, stock_min,
+                 stock_objetivo, costo_unit, impacto_usd, aprobado, fecha_aprobacion
+          FROM v_sugerencias_compra
+          {where_sql}
+          ORDER BY impacto_usd DESC
+          LIMIT 50000
+        """)
+        res = await db.execute(sql_fb, params)
+        rows = res.mappings().all()
 
-    # build csv
-    headers = [
-        "sku","producto","riesgo","qty_recomendada","stock_actual","stock_min","stock_objetivo",
-        "costo_unit","impacto_usd","aprobado","fecha_aprobacion"
-    ]
+    headers = list(rows[0].keys()) if rows else ["sku", "producto", "qty_recomendada"]
     lines = [",".join(headers)]
     for r in rows:
         line = []
@@ -951,9 +963,14 @@ async def api_export_purchases(
             line.append(s)
         lines.append(",".join(line))
 
-    csv_data = "\n".join(lines)
-    response.headers["Content-Type"] = "text/csv; charset=utf-8"
-    return csv_data
+    # BOM UTF-8 para Excel
+    csv_data = "\ufeff" + "\n".join(lines)
+    filename = f"sugerencias_smartstock_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
+    return Response(
+        content=csv_data.encode("utf-8"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # =========================================================
