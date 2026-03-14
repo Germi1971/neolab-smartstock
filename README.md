@@ -4,6 +4,8 @@
 
 Sistema profesional de predicción de reposición de compras con motor ML, scheduler automatizado y panel de control React.
 
+> **Arquitectura unificada:** Este repositorio es el sistema canónico. Ver [ARCHITECTURE.md](ARCHITECTURE.md) para el diagrama de flujo y componentes.
+
 ## Características
 
 ### Fase 1: Arquitectura Base
@@ -19,9 +21,10 @@ Sistema profesional de predicción de reposición de compras con motor ML, sched
 - ✅ Generación de políticas (s, S)
 - ✅ Detección de drift
 
-### Fase 3: Frontend PRO
+### Fase 3: Frontend PRO (UI canónica)
 - ✅ React + TypeScript + Tailwind CSS
 - ✅ Tabs: Stock, Compras, Parámetros, ML
+- ✅ Botón "Descargar reporte CSV" en header
 - ✅ Paginación server-side real
 - ✅ Filtros avanzados y exports
 - ✅ Modal SKU con detalles ML

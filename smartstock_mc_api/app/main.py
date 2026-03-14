@@ -539,7 +539,7 @@ app.include_router(sku_history_router)
 
 
 
-# ✅ NUEVO: router dashboard compatible con BOLT
+# Router dashboard (sugerencias, export)
 from app.routes_dashboard import router as dashboard_router
 app.include_router(dashboard_router, tags=["Dashboard"])
 

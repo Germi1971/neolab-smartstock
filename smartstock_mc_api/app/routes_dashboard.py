@@ -39,7 +39,7 @@ class ApproveBody(BaseModel):
 
 
 # -----------------------------
-# Endpoints esperados por BOLT
+# Endpoints dashboard (compatibles con frontend neolab_smartstock)
 # -----------------------------
 
 @router.get("/dashboard/sugerencias")
