@@ -172,8 +172,24 @@ def score_backlog(row: dict) -> float:
 def penalty_overstock(row: dict) -> float:
     """
     Riesgo de sobrestock. Penalidad 0-100 (resta del score).
-    Alto cuando stock >> objetivo, o hay cap_vencimiento, cliente dominante.
+    Prioridad: days_of_supply (días de stock) si existe; si no, ratio stock/objetivo.
     """
+    days = row.get("days_of_supply")
+    if days is not None:
+        try:
+            d = float(days)
+            if d > 365:
+                return 100.0
+            if d > 180:
+                return 70.0
+            if d > 120:
+                return 40.0
+            if d > 90:
+                return 10.0
+            return 0.0
+        except (TypeError, ValueError):
+            pass
+
     stock = float(row.get("stock_posicion") or row.get("oferta_total") or 0)
     objetivo = float(row.get("stock_objetivo_final") or row.get("stock_objetivo") or 0)
 
@@ -323,13 +339,69 @@ SELECT
   COALESCE(pr.stock_min, p.stock_min) AS stock_min,
   COALESCE(pr.stock_objetivo_final, p.stock_objetivo) AS stock_objetivo_final,
   p.stock_objetivo,
-  COALESCE(pr.criticidad, d.criticidad, 'BAJO') AS criticidad,
-  COALESCE(d.lt_days, 60) AS lt_days,
+  COALESCE(pr.criticidad, d.criticidad, p.criticidad, 'BAJO') AS criticidad,
+  COALESCE(d.lt_days, p.lead_time_dias, 60) AS lt_days,
   COALESCE(d.p_stockout_at_current_stock, 0) AS p_stockout_at_current_stock,
   COALESCE(pr.backlog_qty_at_calc, 0) AS backlog_qty,
   pr.backlog_qty_at_calc AS backlog_qty_at_calc,
   f.demanda_prom_mensual_12m,
-  f.meses_con_venta_12m
+  f.demanda_prom_mensual_12m AS Forecast_m,
+  f.meses_con_venta_12m,
+  -- Margen: margen_total / revenue_total (0-1). score_margen usa umbrales 0.4, 0.25, 0.15
+  (CASE
+    WHEN COALESCE(ef.eventos_12m, 0) > 0
+     AND COALESCE(ef.revenue_prom_evento_12m, 0) > 0
+    THEN ef.margen_total_12m / (ef.revenue_prom_evento_12m * ef.eventos_12m)
+    ELSE NULL
+  END) AS margen_pct,
+  -- top1_share_12m: share del cliente dominante (0-1). Si existe v_sku_top_client_share, unir aquí.
+  NULL AS top1_share_12m,
+  -- demanda_6m, demanda_24m: para score_acceleration. Si v_sku_features_12m las tiene, reemplazar NULL.
+  NULL AS demanda_6m,
+  NULL AS demanda_24m,
+  -- days_of_supply: stock / demanda_anual_diaria. Para penalty_overstock alternativo.
+  (CASE
+    WHEN COALESCE(f.demanda_prom_mensual_12m, 0) > 0
+    THEN (COALESCE(se.stock_libre_deposito, 0) + COALESCE(se.impo_libre, 0))
+         / (f.demanda_prom_mensual_12m * 12 / 365.0)
+    ELSE NULL
+  END) AS days_of_supply
+FROM parametros_sku p
+LEFT JOIN v_stock_estado_unidades se ON se.sku = p.sku
+LEFT JOIN ss2_policy_results pr ON pr.sku = p.sku
+LEFT JOIN ss2_demand_cache d ON d.sku = p.sku
+LEFT JOIN v_sku_features_12m f ON f.SKU = p.sku
+LEFT JOIN v_sku_event_features_12m ef ON ef.SKU = p.sku
+WHERE p.activo = 1 AND p.discontinuado = 0
+"""
+
+# Fallback si v_sku_event_features_12m no existe o faltan columnas
+FETCH_SCORING_INPUTS_SQL_LEGACY = """
+SELECT
+  p.sku,
+  COALESCE(se.stock_libre_deposito, 0) + COALESCE(se.impo_libre, 0) AS stock_posicion,
+  COALESCE(se.stock_libre_deposito, 0) + COALESCE(se.impo_libre, 0) AS oferta_total,
+  COALESCE(pr.stock_min, p.stock_min) AS stock_min,
+  COALESCE(pr.stock_objetivo_final, p.stock_objetivo) AS stock_objetivo_final,
+  p.stock_objetivo,
+  COALESCE(pr.criticidad, d.criticidad, p.criticidad, 'BAJO') AS criticidad,
+  COALESCE(d.lt_days, p.lead_time_dias, 60) AS lt_days,
+  COALESCE(d.p_stockout_at_current_stock, 0) AS p_stockout_at_current_stock,
+  COALESCE(pr.backlog_qty_at_calc, 0) AS backlog_qty,
+  pr.backlog_qty_at_calc AS backlog_qty_at_calc,
+  f.demanda_prom_mensual_12m,
+  f.demanda_prom_mensual_12m AS Forecast_m,
+  f.meses_con_venta_12m,
+  NULL AS margen_pct,
+  NULL AS top1_share_12m,
+  NULL AS demanda_6m,
+  NULL AS demanda_24m,
+  (CASE
+    WHEN COALESCE(f.demanda_prom_mensual_12m, 0) > 0
+    THEN (COALESCE(se.stock_libre_deposito, 0) + COALESCE(se.impo_libre, 0))
+         / (f.demanda_prom_mensual_12m * 12 / 365.0)
+    ELSE NULL
+  END) AS days_of_supply
 FROM parametros_sku p
 LEFT JOIN v_stock_estado_unidades se ON se.sku = p.sku
 LEFT JOIN ss2_policy_results pr ON pr.sku = p.sku
@@ -374,7 +446,12 @@ def run_purchase_scoring_batch(conn: Any) -> tuple[int, list[dict]]:
             cur.execute(FETCH_SCORING_INPUTS_SQL)
             rows = cur.fetchall()
     except pymysql.err.OperationalError as e:
-        if "Unknown column" in str(e) or "doesn't exist" in str(e).lower():
+        err = str(e).lower()
+        if "unknown column" in err or "doesn't exist" in err or "unknown table" in err:
+            with conn.cursor() as cur:
+                cur.execute(FETCH_SCORING_INPUTS_SQL_LEGACY)
+                rows = cur.fetchall()
+        else:
             raise
 
     for r in rows:

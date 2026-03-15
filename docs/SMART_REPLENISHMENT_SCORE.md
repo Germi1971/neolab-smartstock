@@ -106,3 +106,19 @@ acceleration = demand_6m / demand_24m
 Si `demand_6m` y `demand_24m` existen en las vistas/tablas, el scoring los usa. Si no, usa fallback neutral (40 puntos).
 
 Para habilitar: añadir columnas `demanda_6m`, `demanda_24m` a `v_sku_features_12m` o vista equivalente.
+
+---
+
+## Inputs ampliados (FETCH_SCORING_INPUTS_SQL)
+
+El scoring usa estos campos cuando existen:
+
+| Campo | Fuente | Uso |
+|-------|--------|-----|
+| `margen_pct` | v_sku_event_features_12m (margen/revenue) | score_margen |
+| `top1_share_12m` | Vista de share cliente dominante | penalty_cliente |
+| `demanda_6m`, `demanda_24m` | v_sku_features_12m o similar | score_acceleration |
+| `days_of_supply` | Calculado: stock / demanda_anual_diaria | penalty_overstock |
+| `lead_time_dias` | parametros_sku (fallback si ss2_demand_cache no tiene lt_days) | score_lead_time |
+
+Si `v_sku_event_features_12m` no existe, se usa `FETCH_SCORING_INPUTS_SQL_LEGACY` (sin margen_pct).

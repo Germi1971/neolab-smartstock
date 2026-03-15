@@ -60,6 +60,14 @@ def test_penalty_overstock():
     assert penalty_overstock(row) == 100.0
 
 
+def test_penalty_overstock_days_of_supply():
+    """Cuando existe days_of_supply, se usa en lugar del ratio."""
+    assert penalty_overstock({"days_of_supply": 400}) == 100.0
+    assert penalty_overstock({"days_of_supply": 200}) == 70.0
+    assert penalty_overstock({"days_of_supply": 150}) == 40.0
+    assert penalty_overstock({"days_of_supply": 50}) == 0.0
+
+
 def test_penalty_cliente():
     row = {"top1_share_12m": 0.90}
     assert penalty_cliente(row) == 50.0
