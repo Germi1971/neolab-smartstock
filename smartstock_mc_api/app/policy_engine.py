@@ -327,11 +327,13 @@ FROM parametros_sku p
 LEFT JOIN v_stock_estado_unidades se ON se.sku = p.sku
 LEFT JOIN ss2_demand_cache d ON d.sku = p.sku
 LEFT JOIN sku_mc_cache c ON c.sku = p.sku
+LEFT JOIN ss2_demand_classification dc ON dc.sku = p.sku
 WHERE p.activo = 1 AND p.discontinuado = 0
+  AND (dc.lifecycle_state IS NULL OR dc.lifecycle_state != 'DEAD')
 """
 
 # Fallback si parametros_sku no tiene cap_cliente_dominante, cap_vencimiento
-# (ejecutar migration_add_caps_parametros.sql para habilitarlos)
+# o si ss2_demand_classification no existe
 FETCH_POLICY_INPUTS_SQL_LEGACY = """
 SELECT
   p.sku,
@@ -398,7 +400,8 @@ def run_policy_engine_batch(conn: Any) -> tuple[int, list[dict]]:
             cur.execute(FETCH_POLICY_INPUTS_SQL)
             rows = cur.fetchall()
     except pymysql.err.OperationalError as e:
-        if "Unknown column" in str(e):
+        err = str(e).lower()
+        if "unknown column" in err or "doesn't exist" in err or "unknown table" in err:
             with conn.cursor() as cur:
                 cur.execute(FETCH_POLICY_INPUTS_SQL_LEGACY)
                 rows = cur.fetchall()

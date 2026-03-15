@@ -267,10 +267,25 @@ def decide_mc(row: Dict[str, Any]) -> Tuple[bool, str]:
     if activo != 1:
         return False, "SKU inactivo"
 
+    # Excluir SKUs DEAD/DORMANT por clasificación
+    lifecycle = (row.get("lifecycle_state") or "").upper()
+    if lifecycle == "DEAD":
+        return False, "Clasificación DEAD: excluido"
+    if lifecycle == "DORMANT":
+        return False, "Clasificación DORMANT: no auto buy"
+
     dias_obs = float(row.get("dias_observados") or 0.0)
     eventos_12m = float(row.get("eventos_12m") or 0.0)
     unidades_12m = float(row.get("unidades_12m") or 0.0)
     tipo = (row.get("tipo_demanda") or row.get("Model") or row.get("model") or "").upper()
+    demand_class = (row.get("demand_class") or "").upper()
+
+    # Usar clasificación automática si tipo_demanda está vacío
+    if not tipo and demand_class:
+        if demand_class in ("INTERMITTENT", "LUMPY"):
+            tipo = "INTERMITENTE"
+        elif demand_class in ("REGULAR", "ERRATIC"):
+            tipo = "REGULAR"
 
     # Gates mínimos de datos
     if dias_obs < 180:
@@ -298,6 +313,12 @@ def decide_mc(row: Dict[str, Any]) -> Tuple[bool, str]:
     p_event = float(row.get("p_event") or 0.0)
     forecast_m = float(row.get("Forecast_m") or row.get("forecast_m") or 0.0)
     pct_zero = float(row.get("PctZero") or 0.0)
+
+    # LUMPY: MC fuertemente preferido (tratar como intermitente con alta variabilidad)
+    if demand_class == "LUMPY":
+        if riesgo_ok:
+            return True, f"MC: LUMPY (clasificación) LT={int(lt_days)}d"
+        return False, f"No MC: LUMPY pero LT bajo"
 
     if "INTERMIT" in tipo:
         # Regla principal
@@ -424,6 +445,40 @@ FROM v_analisis_sku_excel_mc a
 WHERE COALESCE(a.activo, 1) = 1;
 """
 
+# Con clasificación (si ss2_demand_classification existe)
+FETCH_ACTIVE_SKUS_SQL_WITH_DC = """
+SELECT
+  a.sku,
+  a.activo,
+  a.Model AS model,
+  a.tipo_demanda,
+  a.PctZero,
+  a.p_event AS p_event,
+  a.q_mean_event AS q_mean_event,
+  a.q_sd_event AS q_sd_event,
+  a.Forecast_m AS Forecast_m,
+  a.sigma_mensual_12m AS sigma_mensual_12m,
+  a.stock_posicion AS stock_posicion,
+  a.LT_mean_m AS lt_months,
+  a.Mu_LT AS lt_days,
+  a.ServiceTarget AS service_target,
+  a.moq,
+  a.multiplo_compra,
+  NULL AS q_cap,
+  a.dias_observados,
+  a.eventos_12m,
+  a.unidades_12m,
+  a.mu_unidades_evento,
+  a.sigma_unidades_evento,
+  a.mu_gap_dias,
+  a.sigma_gap_dias,
+  dc.demand_class,
+  dc.lifecycle_state
+FROM v_analisis_sku_excel_mc a
+LEFT JOIN ss2_demand_classification dc ON dc.sku = a.sku
+WHERE COALESCE(a.activo, 1) = 1;
+"""
+
 FETCH_ONE_SKU_SQL = """
 SELECT
   a.sku,
@@ -457,6 +512,23 @@ SELECT
   a.sigma_gap_dias
 
 FROM v_analisis_sku_excel_mc a
+WHERE a.sku = %s
+LIMIT 1;
+"""
+
+FETCH_ONE_SKU_SQL_WITH_DC = """
+SELECT
+  a.sku, a.activo, a.Model AS model, a.tipo_demanda,
+  a.PctZero, a.p_event, a.q_mean_event, a.q_sd_event,
+  a.Forecast_m, a.sigma_mensual_12m, a.stock_posicion,
+  a.LT_mean_m AS lt_months, a.Mu_LT AS lt_days, a.ServiceTarget,
+  a.moq, a.multiplo_compra, NULL AS q_cap,
+  a.dias_observados, a.eventos_12m, a.unidades_12m,
+  a.mu_unidades_evento, a.sigma_unidades_evento,
+  a.mu_gap_dias, a.sigma_gap_dias,
+  dc.demand_class, dc.lifecycle_state
+FROM v_analisis_sku_excel_mc a
+LEFT JOIN ss2_demand_classification dc ON dc.sku = a.sku
 WHERE a.sku = %s
 LIMIT 1;
 """
@@ -694,7 +766,7 @@ def root():
     return {
         "ok": True,
         "service": "smartstock_mc_api",
-        "endpoints": ["/health", "/docs", "/mc/run", "/mc/sku/{sku}", "/mc/cache/{sku}", "/mc/top_stockout", "/policy/run", "/scoring/run"],
+        "endpoints": ["/health", "/docs", "/classification/run", "/mc/run", "/mc/sku/{sku}", "/mc/cache/{sku}", "/mc/top_stockout", "/policy/run", "/scoring/run"],
     }
 
 
@@ -918,8 +990,15 @@ def mc_run(req: RunBatchRequest):
     try:
         with get_conn(cfg) as conn:
             with conn.cursor() as cur:
-                cur.execute(FETCH_ACTIVE_SKUS_SQL)
-                rows = cur.fetchall()
+                try:
+                    cur.execute(FETCH_ACTIVE_SKUS_SQL_WITH_DC)
+                    rows = cur.fetchall()
+                except pymysql.err.OperationalError as e:
+                    if "doesn't exist" in str(e).lower() or "unknown table" in str(e).lower():
+                        cur.execute(FETCH_ACTIVE_SKUS_SQL)
+                        rows = cur.fetchall()
+                    else:
+                        raise
 
             log.info(f"MC batch: fetched {len(rows)} active SKUs.")
 
@@ -960,8 +1039,15 @@ def mc_sku(sku: str, req: RunSkuRequest):
     try:
         with get_conn(cfg) as conn:
             with conn.cursor() as cur:
-                cur.execute(FETCH_ONE_SKU_SQL, (sku,))
-                row = cur.fetchone()
+                try:
+                    cur.execute(FETCH_ONE_SKU_SQL_WITH_DC, (sku,))
+                    row = cur.fetchone()
+                except pymysql.err.OperationalError as e:
+                    if "doesn't exist" in str(e).lower() or "unknown table" in str(e).lower():
+                        cur.execute(FETCH_ONE_SKU_SQL, (sku,))
+                        row = cur.fetchone()
+                    else:
+                        raise
 
             if not row:
                 raise HTTPException(status_code=404, detail=f"SKU not found: {sku}")
@@ -1011,6 +1097,24 @@ def mc_top_stockout(limit: int = 25):
         return {"ok": True, "limit": limit, "rows": rows}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Top stockout error: {str(e)}")
+
+
+# -----------------------------
+# Demand Classification
+# -----------------------------
+from app.demand_classification import run_demand_classification_batch
+
+
+@app.post("/classification/run")
+def classification_run():
+    """Ejecuta clasificación de demanda: lee sku_obs_12m, escribe ss2_demand_classification."""
+    try:
+        with get_conn(cfg) as conn:
+            count, results = run_demand_classification_batch(conn)
+        return {"ok": True, "updated": count, "sample": results[:5]}
+    except Exception as e:
+        log.exception("Demand classification error")
+        raise HTTPException(status_code=500, detail=f"Demand classification error: {str(e)}")
 
 
 # -----------------------------
