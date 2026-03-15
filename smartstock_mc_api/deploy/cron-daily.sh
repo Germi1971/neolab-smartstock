@@ -1,6 +1,6 @@
 #!/bin/bash
 # Pipeline SS2 diario: refresh_sku_obs_12m -> MC -> Policy -> Scoring
-# Crontab: 0 2 * * * /home/ubuntu/neolab_smartstock/smartstock_mc_api/deploy/cron-daily.sh >> /var/log/smartstock-mc-cron.log 2>&1
+# Crontab: 0 2 * * * /home/ubuntu/neolab-smartstock/smartstock_mc_api/deploy/cron-daily.sh >> /var/log/smartstock-mc-cron.log 2>&1
 
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

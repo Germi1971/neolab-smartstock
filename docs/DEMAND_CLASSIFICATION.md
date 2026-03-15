@@ -109,6 +109,14 @@ Supongamos:
 - Las queries tienen fallback: si `ss2_demand_classification` no existe, se usa la query legacy
 - No es necesario borrar la tabla; simplemente dejar de ejecutar el job
 
+## Integración con Stock HUD (modal)
+
+El modal SmartStock en `SCANNER_REPO/apps/stock-hud` ahora:
+
+1. **Prioriza** `ss2_v_purchase_suggestions_v2` (Policy Engine) sobre v_sugerencias_compra y MC cache
+2. **Muestra** demand_class, lifecycle_state, classification_reason cuando existen
+3. **Usa** stock_objetivo_final y qty_recomendada_final del Policy Engine
+
 ## Integración con Policy Engine
 
 - **REGULAR** → `choose_base_demand_target` usa analytic si mc_enabled=0
