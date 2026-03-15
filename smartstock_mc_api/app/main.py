@@ -73,6 +73,23 @@ Q_CAP_MULTIPLE = float(os.getenv('Q_CAP_MULTIPLE', '3'))
 # Tabla simple para overrides manuales por SKU
 OVERRIDE_TABLE = os.getenv('SKU_OVERRIDE_TABLE', 'sku_service_override')
 
+# Escribir también en sku_mc_cache legacy (compatibilidad hasta migrar vista)
+LEGACY_MC_CACHE = os.getenv('LEGACY_MC_CACHE', '1').lower() in ('1', 'true', 'yes')
+
+
+def _criticidad_unificada(legacy: str) -> str:
+    """Mapea criticidad legacy a: CRITICO | ALTO | MEDIO | BAJO"""
+    u = (legacy or "").upper()
+    if u == "CRITICO":
+        return "CRITICO"
+    if u == "IMPORTANTE":
+        return "ALTO"
+    if u == "NO_CRITICO":
+        return "BAJO"
+    if u in ("ALTO", "MEDIO", "BAJO"):
+        return u
+    return "BAJO"
+
 def fetch_override(conn, sku: str) -> float | None:
     """Devuelve override (0.50-0.999) para el SKU o None si no hay.
     Fuente: tabla OVERRIDE_TABLE(sku, service_prob_override).
@@ -187,30 +204,36 @@ def simulate_demand_horizon(
     return out
 
 
-def mc_metrics(demand_samples: List[float], stock_posicion: float, service_prob: float) -> Dict[str, float]:
+def mc_metrics(demand_samples: List[float], stock_posicion: float) -> Dict[str, float]:
+    """
+    Demand Engine: retorna solo percentiles y métricas de riesgo.
+    NO retorna stock_objetivo ni qty_recomendada (eso lo decide el Policy Engine).
+    """
     stock_pos = float(stock_posicion or 0.0)
-    service_prob = clamp(float(service_prob), 0.50, 0.999)
 
     if not demand_samples:
         return {
+            "demand_mean": 0.0,
             "demand_p50": 0.0,
+            "demand_p80": 0.0,
             "demand_p90": 0.0,
             "demand_p95": 0.0,
             "demand_p97": 0.0,
             "demand_p99": 0.0,
-            "stock_objetivo_mc": 0.0,
-            "p_stockout": 0.0,
+            "p_stockout_at_current_stock": 0.0,
             "exp_lost_units": 0.0,
+            "fill_rate_est": 1.0,
         }
 
     srt = sorted(demand_samples)
+    n = len(demand_samples)
+    demand_mean = sum(demand_samples) / n
     p50 = quantile_sorted(srt, 0.50)
+    p80 = quantile_sorted(srt, 0.80)
     p90 = quantile_sorted(srt, 0.90)
     p95 = quantile_sorted(srt, 0.95)
     p97 = quantile_sorted(srt, 0.97)
     p99 = quantile_sorted(srt, 0.99)
-
-    objetivo = quantile_sorted(srt, service_prob)
 
     stockouts = 0
     lost_sum = 0.0
@@ -219,15 +242,20 @@ def mc_metrics(demand_samples: List[float], stock_posicion: float, service_prob:
             stockouts += 1
             lost_sum += (d - stock_pos)
 
+    p_stockout = float(stockouts / n)
+    fill_rate_est = 1.0 - p_stockout
+
     return {
+        "demand_mean": float(demand_mean),
         "demand_p50": float(p50),
+        "demand_p80": float(p80),
         "demand_p90": float(p90),
         "demand_p95": float(p95),
         "demand_p97": float(p97),
         "demand_p99": float(p99),
-        "stock_objetivo_mc": float(objetivo),
-        "p_stockout": float(stockouts / len(demand_samples)),
-        "exp_lost_units": float(lost_sum / len(demand_samples)),
+        "p_stockout_at_current_stock": p_stockout,
+        "exp_lost_units": float(lost_sum / n),
+        "fill_rate_est": float(fill_rate_est),
     }
 
 
@@ -433,7 +461,137 @@ WHERE a.sku = %s
 LIMIT 1;
 """
 
-UPSERT_CACHE_SQL = """
+UPSERT_DEMAND_CACHE_SQL = """
+INSERT INTO ss2_demand_cache
+(sku, n_sims, horizon_days, lt_days, review_days, lambda_eventos_mes, q_mean_event, q_sd_event,
+ regimen, criticidad, service_prob_usado,
+ demand_mean, demand_p50, demand_p80, demand_p90, demand_p95, demand_p97, demand_p99,
+ p_stockout_at_current_stock, exp_lost_units, fill_rate_est,
+ mc_enabled, mc_reason,
+ updated_at)
+VALUES
+(%s,%s,%s,%s,%s,%s,%s,%s,
+ %s,%s,%s,
+ %s,%s,%s,%s,%s,%s,%s,
+ %s,%s,%s,
+ %s,%s,
+ NOW())
+ON DUPLICATE KEY UPDATE
+n_sims=VALUES(n_sims),
+horizon_days=VALUES(horizon_days),
+lt_days=VALUES(lt_days),
+review_days=VALUES(review_days),
+lambda_eventos_mes=VALUES(lambda_eventos_mes),
+q_mean_event=VALUES(q_mean_event),
+q_sd_event=VALUES(q_sd_event),
+regimen=VALUES(regimen),
+criticidad=VALUES(criticidad),
+service_prob_usado=VALUES(service_prob_usado),
+demand_mean=VALUES(demand_mean),
+demand_p50=VALUES(demand_p50),
+demand_p80=VALUES(demand_p80),
+demand_p90=VALUES(demand_p90),
+demand_p95=VALUES(demand_p95),
+demand_p97=VALUES(demand_p97),
+demand_p99=VALUES(demand_p99),
+p_stockout_at_current_stock=VALUES(p_stockout_at_current_stock),
+exp_lost_units=VALUES(exp_lost_units),
+fill_rate_est=VALUES(fill_rate_est),
+mc_enabled=VALUES(mc_enabled),
+mc_reason=VALUES(mc_reason),
+updated_at=NOW();
+"""
+
+FETCH_DEMAND_CACHE_SQL = """
+SELECT *
+FROM ss2_demand_cache
+WHERE sku = %s
+LIMIT 1;
+"""
+
+TOP_STOCKOUT_SQL = """
+SELECT sku, mc_enabled, p_stockout_at_current_stock AS p_stockout, exp_lost_units, mc_reason, updated_at
+FROM ss2_demand_cache
+ORDER BY p_stockout_at_current_stock DESC, exp_lost_units DESC
+LIMIT %s;
+"""
+
+
+def _upsert_demand_cache(conn, out: Dict[str, Any]) -> None:
+    """Escribe en ss2_demand_cache (contrato Demand Engine)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            UPSERT_DEMAND_CACHE_SQL,
+            (
+                out["sku"],
+                int(out["n_sims"]),
+                int(out["horizon_days"]),
+                int(out["lt_days"]),
+                int(out["review_days"]),
+                float(out["lambda_eventos_mes"]),
+                float(out["q_mean_event"]),
+                float(out["q_sd_event"]),
+                out.get("regimen"),
+                out.get("criticidad"),
+                float(out.get("service_prob_usado", 0)),
+                float(out.get("demand_mean", 0)),
+                float(out.get("demand_p50", 0)),
+                float(out.get("demand_p80", 0)),
+                float(out.get("demand_p90", 0)),
+                float(out.get("demand_p95", 0)),
+                float(out.get("demand_p97", 0)),
+                float(out.get("demand_p99", 0)),
+                float(out.get("p_stockout_at_current_stock", 0)),
+                float(out.get("exp_lost_units", 0)),
+                float(out.get("fill_rate_est", 1)),
+                int(out["mc_enabled"]),
+                str(out["mc_reason"])[:255] if out.get("mc_reason") else None,
+            ),
+        )
+
+
+def _upsert_legacy_cache(conn, out: Dict[str, Any]) -> None:
+    """Escribe en sku_mc_cache (compatibilidad hasta migrar vista)."""
+    if not LEGACY_MC_CACHE:
+        return
+    sp = out.get("_legacy_service_prob") or out.get("service_prob_usado", 0)
+    sp_auto = out.get("_legacy_service_prob_auto") or out.get("service_prob_usado", 0)
+    with conn.cursor() as cur:
+        cur.execute(
+            UPSERT_LEGACY_CACHE_SQL,
+            (
+                out["sku"],
+                int(out["n_sims"]),
+                int(out["horizon_days"]),
+                int(out["lt_days"]),
+                int(out["review_days"]),
+                float(out["lambda_eventos_mes"]),
+                float(out["q_mean_event"]),
+                float(out["q_sd_event"]),
+                float(sp),
+                float(out.get("service_prob_usado", sp)),
+                float(sp_auto),
+                out.get("_legacy_service_prob_override"),
+                int(out["mc_enabled"]),
+                str(out["mc_reason"])[:255] if out.get("mc_reason") else None,
+                float(out.get("demand_p50", 0)),
+                float(out.get("demand_p90", 0)),
+                float(out.get("demand_p95", 0)),
+                float(out.get("demand_p97", 0) or out.get("demand_p95", 0)),
+                float(out.get("demand_p99", 0)),
+                float(out.get("_legacy_stock_objetivo", 0)),
+                float(out.get("_legacy_qty_recomendada", 0)),
+                float(out.get("p_stockout_at_current_stock", 0)),
+                float(out.get("exp_lost_units", 0)),
+                int(out.get("moq", 1)),
+                int(out.get("multiplo_compra", 1)),
+                out.get("q_cap"),
+                out.get("_legacy_criticidad") or out.get("criticidad"),
+            ),
+        )
+
+
+UPSERT_LEGACY_CACHE_SQL = """
 INSERT INTO sku_mc_cache
 (sku, n_sims, horizon_days, lt_days, review_days, lambda_eventos_mes, q_mean_event, q_sd_event,
  service_prob, service_prob_usado, service_prob_auto, service_prob_override,
@@ -463,7 +621,6 @@ q_sd_event=VALUES(q_sd_event),
 service_prob=VALUES(service_prob),
 service_prob_usado=VALUES(service_prob_usado),
 service_prob_auto=VALUES(service_prob_auto),
-/* no pises override manual */
 service_prob_override=COALESCE(sku_mc_cache.service_prob_override, VALUES(service_prob_override)),
 mc_enabled=VALUES(mc_enabled),
 mc_reason=VALUES(mc_reason),
@@ -481,20 +638,6 @@ multiplo_compra=VALUES(multiplo_compra),
 q_cap=VALUES(q_cap),
 criticidad=VALUES(criticidad),
 updated_at=NOW();
-"""
-
-FETCH_CACHE_SQL = """
-SELECT *
-FROM sku_mc_cache
-WHERE sku = %s
-LIMIT 1;
-"""
-
-TOP_STOCKOUT_SQL = """
-SELECT sku, mc_enabled, p_stockout, exp_lost_units, qty_recomendada_mc, stock_objetivo_mc, mc_reason, updated_at
-FROM sku_mc_cache
-ORDER BY p_stockout DESC, exp_lost_units DESC
-LIMIT %s;
 """
 
 
@@ -551,7 +694,7 @@ def root():
     return {
         "ok": True,
         "service": "smartstock_mc_api",
-        "endpoints": ["/health", "/docs", "/mc/run", "/mc/sku/{sku}", "/mc/cache/{sku}", "/mc/top_stockout"],
+        "endpoints": ["/health", "/docs", "/mc/run", "/mc/sku/{sku}", "/mc/cache/{sku}", "/mc/top_stockout", "/policy/run", "/scoring/run"],
     }
 
 
@@ -672,12 +815,15 @@ def compute_one(
     # -----------------------------
     mc_enabled, mc_reason = decide_mc(row_local)
 
+    criticidad_unif = _criticidad_unificada(criticidad)
+    regimen = tipo if tipo else "NUEVO"
+
     # -----------------------------
-    # SIN MC → solo cacheo
+    # SIN MC → solo cacheo (contrato Demand Engine)
     # -----------------------------
     if (not mc_enabled) and (not force):
         lam_m, lam_mode = infer_lambda_eventos_mes(row_local)
-        return {
+        out0 = {
             "sku": sku,
             "mc_enabled": 0,
             "mc_reason": mc_reason,
@@ -686,42 +832,43 @@ def compute_one(
             "lt_days": int(round(lt_days)),
             "review_days": int(review_days or 0),
             "lambda_eventos_mes": float(lam_m),
-            "lambda_mode": lam_mode,
             "q_mean_event": float(q_mean),
             "q_sd_event": float(q_sd),
-            "service_prob": float(service_prob),
+            "regimen": regimen,
+            "criticidad": criticidad_unif,
             "service_prob_usado": float(service_prob_usado),
             "service_prob_auto": float(service_prob_auto),
-            "service_prob_override": service_prob_override_final,
-            "criticidad": criticidad,
-            "stock_posicion": stock_pos,
-            "Forecast_m": forecast_m,
+            "demand_mean": 0.0,
             "demand_p50": 0.0,
+            "demand_p80": 0.0,
             "demand_p90": 0.0,
             "demand_p95": 0.0,
             "demand_p97": 0.0,
             "demand_p99": 0.0,
-            "stock_objetivo_mc": 0.0,
-            "qty_recomendada_mc": 0.0,
-            "p_stockout": 0.0,
+            "p_stockout_at_current_stock": 0.0,
             "exp_lost_units": 0.0,
+            "fill_rate_est": 1.0,
             "moq": moq,
             "multiplo_compra": multiplo,
             "q_cap": q_cap,
         }
+        if LEGACY_MC_CACHE:
+            out0["_legacy_stock_objetivo"] = 0.0
+            out0["_legacy_qty_recomendada"] = 0.0
+            out0["_legacy_service_prob"] = float(service_prob_usado)
+            out0["_legacy_service_prob_auto"] = float(service_prob_auto)
+            out0["_legacy_service_prob_override"] = service_prob_override_final
+            out0["_legacy_criticidad"] = criticidad
+        return out0
 
     # -----------------------------
-    # MONTE CARLO
+    # MONTE CARLO (contrato Demand Engine: solo percentiles y riesgo)
     # -----------------------------
     lam_m, lam_mode = infer_lambda_eventos_mes(row_local)
     samples = simulate_demand_horizon(lam_m, q_mean, q_sd, horizon_days, n_sims)
-    met = mc_metrics(samples, stock_posicion=stock_pos, service_prob=service_prob)
+    met = mc_metrics(samples, stock_posicion=stock_pos)
 
-    objetivo = float(met["stock_objetivo_mc"])
-    qty_raw = max(0.0, objetivo - stock_pos)
-    qty_final = apply_rounding(qty_raw, moq=moq, multiplo=multiplo, q_cap=q_cap)
-
-    return {
+    out = {
         "sku": sku,
         "mc_enabled": 1,
         "mc_reason": mc_reason if str(mc_reason).startswith("MC:") else f"MC: {mc_reason}",
@@ -730,22 +877,31 @@ def compute_one(
         "lt_days": int(round(lt_days)),
         "review_days": int(review_days or 0),
         "lambda_eventos_mes": float(lam_m),
-        "lambda_mode": lam_mode,
         "q_mean_event": float(q_mean),
         "q_sd_event": float(q_sd),
-        "service_prob": float(service_prob),
+        "regimen": regimen,
+        "criticidad": criticidad_unif,
         "service_prob_usado": float(service_prob_usado),
         "service_prob_auto": float(service_prob_auto),
-        "service_prob_override": service_prob_override_final,
-        "criticidad": criticidad,
-        "stock_posicion": stock_pos,
-        "Forecast_m": forecast_m,
         **met,
-        "qty_recomendada_mc": float(qty_final),
         "moq": moq,
         "multiplo_compra": multiplo,
         "q_cap": q_cap,
     }
+
+    # Legacy: para sku_mc_cache (compatibilidad vista actual)
+    if LEGACY_MC_CACHE and samples:
+        srt = sorted(samples)
+        legacy_obj = quantile_sorted(srt, service_prob)
+        qty_raw = max(0.0, legacy_obj - stock_pos)
+        out["_legacy_stock_objetivo"] = float(legacy_obj)
+        out["_legacy_qty_recomendada"] = float(apply_rounding(qty_raw, moq=moq, multiplo=multiplo, q_cap=q_cap))
+        out["_legacy_service_prob"] = float(service_prob)
+        out["_legacy_service_prob_auto"] = float(service_prob_auto)
+        out["_legacy_service_prob_override"] = service_prob_override_final
+        out["_legacy_criticidad"] = criticidad  # legacy enum para sku_mc_cache
+
+    return out
 
 
 @app.post("/mc/run")
@@ -767,58 +923,20 @@ def mc_run(req: RunBatchRequest):
 
             log.info(f"MC batch: fetched {len(rows)} active SKUs.")
 
-            with conn.cursor() as cur:
-                for r in rows:
-                    try:
-                        out = compute_one(conn, r, req.n_sims, req.review_days, req.service_prob_override, force=False)
+            for r in rows:
+                try:
+                    out = compute_one(conn, r, req.n_sims, req.review_days, req.service_prob_override, force=False)
 
-                        if int(out["mc_enabled"]) == 1:
-                            simulated += 1
-                        else:
-                            skipped += 1
+                    if int(out["mc_enabled"]) == 1:
+                        simulated += 1
+                    else:
+                        skipped += 1
 
-                        cur.execute(
-                            UPSERT_CACHE_SQL,
-                            (
-                                out["sku"],
-                                int(out["n_sims"]),
-                                int(out["horizon_days"]),
-                                int(out["lt_days"]),
-                                int(out["review_days"]),
-                                float(out["lambda_eventos_mes"]),
-                                float(out["q_mean_event"]),
-                                float(out["q_sd_event"]),
-
-                                float(out["service_prob"]),
-                                float(out.get("service_prob_usado", out["service_prob"])),
-
-                                float(out.get("service_prob_auto", out.get("service_prob_usado", out["service_prob"]))),
-                                out.get("service_prob_override"),
-
-                                int(out["mc_enabled"]),
-                                str(out["mc_reason"])[:255] if out.get("mc_reason") else None,
-
-                                float(out.get("demand_p50", 0.0)),
-                                float(out.get("demand_p90", 0.0)),
-                                float(out.get("demand_p95", 0.0)),
-                                float(out.get("demand_p97", 0.0)),
-                                float(out.get("demand_p99", 0.0)),
-
-                                float(out.get("stock_objetivo_mc", 0.0)),
-                                float(out.get("qty_recomendada_mc", 0.0)),
-                                float(out.get("p_stockout", 0.0)),
-                                float(out.get("exp_lost_units", 0.0)),
-
-                                int(out.get("moq", 1)),
-                                int(out.get("multiplo_compra", 1)),
-                                out.get("q_cap"),
-
-                                out.get("criticidad"),
-                            ),
-                        )
-                        updated += 1
-                    except Exception as e:
-                        errors.append({"sku": r.get("sku"), "error": str(e)})
+                    _upsert_demand_cache(conn, out)
+                    _upsert_legacy_cache(conn, out)
+                    updated += 1
+                except Exception as e:
+                    errors.append({"sku": r.get("sku"), "error": str(e)})
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"DB/Run error: {str(e)}")
@@ -853,48 +971,11 @@ def mc_sku(sku: str, req: RunSkuRequest):
 
             out = compute_one(conn, row, req.n_sims, req.review_days, req.service_prob_override, force=req.force)
 
-            with conn.cursor() as cur:
-                cur.execute(
-                    UPSERT_CACHE_SQL,
-                    (
-                        out["sku"],
-                        int(out["n_sims"]),
-                        int(out["horizon_days"]),
-                        int(out["lt_days"]),
-                        int(out["review_days"]),
-                        float(out["lambda_eventos_mes"]),
-                        float(out["q_mean_event"]),
-                        float(out["q_sd_event"]),
+            _upsert_demand_cache(conn, out)
+            _upsert_legacy_cache(conn, out)
 
-                        float(out["service_prob"]),
-                        float(out.get("service_prob_usado", out["service_prob"])),
-
-                        float(out.get("service_prob_auto", out.get("service_prob_usado", out["service_prob"]))),
-                        out.get("service_prob_override"),
-
-                        int(out["mc_enabled"]),
-                        str(out["mc_reason"])[:255] if out.get("mc_reason") else None,
-
-                        float(out.get("demand_p50", 0.0)),
-                        float(out.get("demand_p90", 0.0)),
-                        float(out.get("demand_p95", 0.0)),
-                        float(out.get("demand_p97", 0.0)),
-                        float(out.get("demand_p99", 0.0)),
-
-                        float(out.get("stock_objetivo_mc", 0.0)),
-                        float(out.get("qty_recomendada_mc", 0.0)),
-                        float(out.get("p_stockout", 0.0)),
-                        float(out.get("exp_lost_units", 0.0)),
-
-                        int(out.get("moq", 1)),
-                        int(out.get("multiplo_compra", 1)),
-                        out.get("q_cap"),
-
-                        out.get("criticidad"),
-                    ),
-                )
-
-        return {"ok": True, "model": row.get("model"), "tipo_demanda": row.get("tipo_demanda"), "result": out}
+        result = {k: v for k, v in out.items() if not k.startswith("_legacy")}
+        return {"ok": True, "model": row.get("model"), "tipo_demanda": row.get("tipo_demanda"), "result": result}
 
     except HTTPException:
         raise
@@ -904,10 +985,11 @@ def mc_sku(sku: str, req: RunSkuRequest):
 
 @app.get("/mc/cache/{sku}")
 def mc_cache_get(sku: str):
+    """Lee de ss2_demand_cache (contrato Demand Engine)."""
     try:
         with get_conn(cfg) as conn:
             with conn.cursor() as cur:
-                cur.execute(FETCH_CACHE_SQL, (sku,))
+                cur.execute(FETCH_DEMAND_CACHE_SQL, (sku,))
                 row = cur.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail=f"No cache row for SKU: {sku}")
@@ -929,3 +1011,39 @@ def mc_top_stockout(limit: int = 25):
         return {"ok": True, "limit": limit, "rows": rows}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Top stockout error: {str(e)}")
+
+
+# -----------------------------
+# Policy Engine (Bloque 4)
+# -----------------------------
+from app.policy_engine import run_policy_engine_batch
+
+
+@app.post("/policy/run")
+def policy_run():
+    """Ejecuta Policy Engine: lee demand cache + params, escribe ss2_policy_results."""
+    try:
+        with get_conn(cfg) as conn:
+            count, results = run_policy_engine_batch(conn)
+        return {"ok": True, "updated": count, "sample": results[:5]}
+    except Exception as e:
+        log.exception("Policy engine error")
+        raise HTTPException(status_code=500, detail=f"Policy engine error: {str(e)}")
+
+
+# -----------------------------
+# Purchase Scoring (SRS)
+# -----------------------------
+from app.purchase_scoring import run_purchase_scoring_batch
+
+
+@app.post("/scoring/run")
+def scoring_run():
+    """Ejecuta Purchase Scoring: lee policy + demand + stock, escribe ss2_purchase_scores."""
+    try:
+        with get_conn(cfg) as conn:
+            count, results = run_purchase_scoring_batch(conn)
+        return {"ok": True, "updated": count, "sample": results[:5]}
+    except Exception as e:
+        log.exception("Purchase scoring error")
+        raise HTTPException(status_code=500, detail=f"Purchase scoring error: {str(e)}")

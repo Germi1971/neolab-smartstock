@@ -11,6 +11,36 @@
 
 ---
 
+## Flujo de actualización (commit → push → pull en AWS)
+
+Sí: el sistema corre en AWS Lightsail. Para desplegar cambios:
+
+**En tu PC (local):**
+```powershell
+cd C:\Users\germa\Documents\NEOLAB\DATO_SOLUTIONS\neolab_smartstock
+git add .
+git commit -m "Descripción del cambio"
+git push origin main
+```
+
+**En AWS Lightsail (SSH):**
+```bash
+ssh -i tu-key.pem ubuntu@TU_IP_LIGHTSAIL
+
+cd /home/ubuntu/neolab_smartstock   # o la ruta donde clonaste el repo
+git pull origin main
+
+# Reiniciar la API para cargar el nuevo código
+sudo systemctl restart smartstock-mc-api
+
+# Verificar
+curl http://localhost:8001/health
+```
+
+**Nota:** Si cambias solo SQL (DDL, vistas), no hace falta reiniciar la API. Ejecuta los scripts MySQL en el servidor donde corre la base.
+
+---
+
 ## Paso a paso
 
 ### 1. Subir el proyecto al servidor
@@ -108,7 +138,13 @@ curl "http://localhost:8001/mc/cache/M524-100L"
 
 ## Automatización diaria (cron)
 
-Para mantener `sku_obs_12m` y el cache Monte Carlo actualizados cada día:
+El script `cron-daily.sh` ejecuta el pipeline SS2 completo:
+1. `refresh_sku_obs_12m` (datos de ventas)
+2. `POST /mc/run` → ss2_demand_cache
+3. `POST /policy/run` → ss2_policy_results
+4. `POST /scoring/run` → ss2_purchase_scores
+
+Para configurar:
 
 ```bash
 # Hacer ejecutable el script
@@ -117,8 +153,8 @@ chmod +x /home/ubuntu/neolab-smartstock/smartstock_mc_api/deploy/cron-daily.sh
 # Editar crontab
 crontab -e
 
-# Añadir línea (ejecuta a las 2:00 AM):
-0 2 * * * /home/ubuntu/neolab-smartstock/smartstock_mc_api/deploy/cron-daily.sh >> /var/log/smartstock-mc-cron.log 2>&1
+# Añadir línea (ejecuta a las 2:00 AM). Ajustar ruta según donde esté el repo:
+0 2 * * * /home/ubuntu/neolab_smartstock/smartstock_mc_api/deploy/cron-daily.sh >> /var/log/smartstock-mc-cron.log 2>&1
 ```
 
 Crear el archivo de log si no existe:
