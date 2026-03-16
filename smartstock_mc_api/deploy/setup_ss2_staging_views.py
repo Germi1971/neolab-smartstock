@@ -48,6 +48,7 @@ def main():
     conn = pymysql.connect(
         host=HOST, port=PORT, user=USER, password=PASS, database=DB,
         charset="utf8mb4",
+        cursorclass=pymysql.cursors.DictCursor,
     )
     try:
         for fname in DDL_FILES:
@@ -79,7 +80,8 @@ def main():
             print(f"  {fname}: OK")
         with conn.cursor() as cur:
             cur.execute("SELECT COUNT(*) AS n FROM ss2_v_purchase_suggestions_v2")
-            n = cur.fetchone()["n"]
+            row = cur.fetchone()
+            n = row["n"] if isinstance(row, dict) else row[0]
         print(f"\nOK: ss2_v_purchase_suggestions_v2 tiene {n} filas")
     finally:
         conn.close()

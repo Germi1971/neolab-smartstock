@@ -115,7 +115,8 @@ def sync_table(src_conn, dst_conn, table: str) -> int:
         return 0
     cols = list(rows[0].keys())
     placeholders = ", ".join(["%s"] * len(cols))
-    col_list = ", ".join(f"`{c}`" for c in cols)
+    # Escapar % en nombres de columnas (ej. "DIST Price -30%") para que execute() no lo interprete
+    col_list = ", ".join(f"`{c.replace('%', '%%')}`" for c in cols)
     sql = f"REPLACE INTO `{table}` ({col_list}) VALUES ({placeholders})"
     with dst_conn.cursor() as cur:
         for r in rows:
