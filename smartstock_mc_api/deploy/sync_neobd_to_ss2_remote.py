@@ -91,7 +91,7 @@ def main():
     print(f"  Origen: {NEODB_HOST}:{NEODB_PORT}/{NEODB_DB}")
     print(f"  Destino: {SS2_HOST}:{SS2_PORT}/{SS2_DB}")
     total = 0
-    for t in TABLES:
+    for t in TABLAS:
         total += sync_table(t)
     for t in TABLAS_OPCIONALES:
         try:
