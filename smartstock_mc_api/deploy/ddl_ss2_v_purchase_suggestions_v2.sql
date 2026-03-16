@@ -1,14 +1,11 @@
 -- =============================================================================
 -- ss2_v_purchase_suggestions_v2 - Vista de sugerencias usando ss2_policy_results
 -- =============================================================================
--- Fuente exclusiva: ss2_policy_results (stock_objetivo_final, qty_recomendada_final).
--- Incluye campos de trazabilidad.
---
--- Estrategia segura: correr en paralelo con v_sugerencias_compra (legacy).
--- Comparar ambas para validación antes de migrar.
+-- qty_recomendada: cálculo en tiempo real (stock_objetivo - oferta_total)
+-- con MOQ, múltiplo y q_cap. Evita desfases cuando el stock cambia entre pipelines.
 --
 -- Requiere: parametros_sku, tablaprecios, v_stock_estado_unidades,
---   v_sku_features_12m, ss2_policy_results, ss2_purchase_scores (opcional)
+--   v_sku_features_12m, ss2_policy_results, ss2_purchase_scores, sku_mc_cache
 --
 -- Ejecutar: mysql -h HOST -u USER -p ss2_staging < deploy/ddl_ss2_v_purchase_suggestions_v2.sql
 -- =============================================================================
@@ -52,13 +49,68 @@ SELECT
   COALESCE(pr.stock_objetivo_final, p.stock_objetivo) AS stock_objetivo_modelo,
   COALESCE(pr.stock_objetivo_final, p.stock_objetivo) AS stock_objetivo_capeado,
   GREATEST(0, COALESCE(pr.stock_objetivo_final, p.stock_objetivo) - (COALESCE(se.stock_libre_deposito,0) + COALESCE(se.impo_libre,0))) AS qty_recomendada_sin_cap,
+  -- Cálculo en tiempo real: qty = stock_objetivo - oferta_total, con MOQ/múltiplo/q_cap
   (CASE WHEN COALESCE(p.sugerencia_aprobada,0) = 1 THEN COALESCE(p.qty_aprobada,0)
-        ELSE COALESCE(pr.qty_recomendada_final, GREATEST(0, COALESCE(pr.stock_objetivo_final, p.stock_objetivo) - (COALESCE(se.stock_libre_deposito,0) + COALESCE(se.impo_libre,0)))) END) AS qty_recomendada,
+        ELSE (CASE
+          WHEN (COALESCE(pr.q_cap, c.q_cap) IS NOT NULL AND COALESCE(pr.q_cap, c.q_cap) > 0)
+            THEN LEAST(
+              CEILING(GREATEST(
+                GREATEST(0, COALESCE(pr.stock_objetivo_final, p.stock_objetivo) - (COALESCE(se.stock_libre_deposito,0) + COALESCE(se.impo_libre,0))),
+                GREATEST(1, COALESCE(pr.moq, p.moq, c.moq, 1))
+              ) / GREATEST(1, COALESCE(pr.multiplo_compra, p.multiplo_compra, c.multiplo_compra, 1))) * GREATEST(1, COALESCE(pr.multiplo_compra, p.multiplo_compra, c.multiplo_compra, 1)),
+              COALESCE(pr.q_cap, c.q_cap)
+            )
+          ELSE CEILING(GREATEST(
+            GREATEST(0, COALESCE(pr.stock_objetivo_final, p.stock_objetivo) - (COALESCE(se.stock_libre_deposito,0) + COALESCE(se.impo_libre,0))),
+            GREATEST(1, COALESCE(pr.moq, p.moq, c.moq, 1))
+          ) / GREATEST(1, COALESCE(pr.multiplo_compra, p.multiplo_compra, c.multiplo_compra, 1))) * GREATEST(1, COALESCE(pr.multiplo_compra, p.multiplo_compra, c.multiplo_compra, 1))
+        END) END) AS qty_recomendada,
   (CASE WHEN COALESCE(p.sugerencia_aprobada,0) = 1 THEN COALESCE(p.qty_aprobada,0)
-        ELSE COALESCE(pr.qty_recomendada_final, GREATEST(0, COALESCE(pr.stock_objetivo_final, p.stock_objetivo) - (COALESCE(se.stock_libre_deposito,0) + COALESCE(se.impo_libre,0)))) END) AS qty_final,
+        ELSE (CASE
+          WHEN (COALESCE(pr.q_cap, c.q_cap) IS NOT NULL AND COALESCE(pr.q_cap, c.q_cap) > 0)
+            THEN LEAST(
+              CEILING(GREATEST(
+                GREATEST(0, COALESCE(pr.stock_objetivo_final, p.stock_objetivo) - (COALESCE(se.stock_libre_deposito,0) + COALESCE(se.impo_libre,0))),
+                GREATEST(1, COALESCE(pr.moq, p.moq, c.moq, 1))
+              ) / GREATEST(1, COALESCE(pr.multiplo_compra, p.multiplo_compra, c.multiplo_compra, 1))) * GREATEST(1, COALESCE(pr.multiplo_compra, p.multiplo_compra, c.multiplo_compra, 1)),
+              COALESCE(pr.q_cap, c.q_cap)
+            )
+          ELSE CEILING(GREATEST(
+            GREATEST(0, COALESCE(pr.stock_objetivo_final, p.stock_objetivo) - (COALESCE(se.stock_libre_deposito,0) + COALESCE(se.impo_libre,0))),
+            GREATEST(1, COALESCE(pr.moq, p.moq, c.moq, 1))
+          ) / GREATEST(1, COALESCE(pr.multiplo_compra, p.multiplo_compra, c.multiplo_compra, 1))) * GREATEST(1, COALESCE(pr.multiplo_compra, p.multiplo_compra, c.multiplo_compra, 1))
+        END) END) AS qty_final,
+  (CASE WHEN COALESCE(p.sugerencia_aprobada,0) = 1 THEN COALESCE(p.qty_aprobada,0)
+        ELSE (CASE
+          WHEN (COALESCE(pr.q_cap, c.q_cap) IS NOT NULL AND COALESCE(pr.q_cap, c.q_cap) > 0)
+            THEN LEAST(
+              CEILING(GREATEST(
+                GREATEST(0, COALESCE(pr.stock_objetivo_final, p.stock_objetivo) - (COALESCE(se.stock_libre_deposito,0) + COALESCE(se.impo_libre,0))),
+                GREATEST(1, COALESCE(pr.moq, p.moq, c.moq, 1))
+              ) / GREATEST(1, COALESCE(pr.multiplo_compra, p.multiplo_compra, c.multiplo_compra, 1))) * GREATEST(1, COALESCE(pr.multiplo_compra, p.multiplo_compra, c.multiplo_compra, 1)),
+              COALESCE(pr.q_cap, c.q_cap)
+            )
+          ELSE CEILING(GREATEST(
+            GREATEST(0, COALESCE(pr.stock_objetivo_final, p.stock_objetivo) - (COALESCE(se.stock_libre_deposito,0) + COALESCE(se.impo_libre,0))),
+            GREATEST(1, COALESCE(pr.moq, p.moq, c.moq, 1))
+          ) / GREATEST(1, COALESCE(pr.multiplo_compra, p.multiplo_compra, c.multiplo_compra, 1))) * GREATEST(1, COALESCE(pr.multiplo_compra, p.multiplo_compra, c.multiplo_compra, 1))
+        END) END) AS qty_recomendada_final,
   tp.`DIST Price -30%` AS costo_unit,
   ((CASE WHEN COALESCE(p.sugerencia_aprobada,0) = 1 THEN COALESCE(p.qty_aprobada,0)
-        ELSE COALESCE(pr.qty_recomendada_final, GREATEST(0, COALESCE(pr.stock_objetivo_final, p.stock_objetivo) - (COALESCE(se.stock_libre_deposito,0) + COALESCE(se.impo_libre,0)))) END) * COALESCE(tp.`DIST Price -30%`,0)) AS impacto_usd,
+        ELSE (CASE
+          WHEN (COALESCE(pr.q_cap, c.q_cap) IS NOT NULL AND COALESCE(pr.q_cap, c.q_cap) > 0)
+            THEN LEAST(
+              CEILING(GREATEST(
+                GREATEST(0, COALESCE(pr.stock_objetivo_final, p.stock_objetivo) - (COALESCE(se.stock_libre_deposito,0) + COALESCE(se.impo_libre,0))),
+                GREATEST(1, COALESCE(pr.moq, p.moq, c.moq, 1))
+              ) / GREATEST(1, COALESCE(pr.multiplo_compra, p.multiplo_compra, c.multiplo_compra, 1))) * GREATEST(1, COALESCE(pr.multiplo_compra, p.multiplo_compra, c.multiplo_compra, 1)),
+              COALESCE(pr.q_cap, c.q_cap)
+            )
+          ELSE CEILING(GREATEST(
+            GREATEST(0, COALESCE(pr.stock_objetivo_final, p.stock_objetivo) - (COALESCE(se.stock_libre_deposito,0) + COALESCE(se.impo_libre,0))),
+            GREATEST(1, COALESCE(pr.moq, p.moq, c.moq, 1))
+          ) / GREATEST(1, COALESCE(pr.multiplo_compra, p.multiplo_compra, c.multiplo_compra, 1))) * GREATEST(1, COALESCE(pr.multiplo_compra, p.multiplo_compra, c.multiplo_compra, 1))
+        END) END) * COALESCE(tp.`DIST Price -30%`,0)) AS impacto_usd,
   pr.demand_target_source,
   pr.selected_service_level,
   pr.applied_caps,
@@ -75,4 +127,5 @@ LEFT JOIN tablaprecios tp ON tp.`Product Number` = p.sku
 LEFT JOIN v_sku_features_12m f ON f.SKU = p.sku
 LEFT JOIN ss2_policy_results pr ON pr.sku = p.sku
 LEFT JOIN ss2_purchase_scores ps ON ps.sku = p.sku
+LEFT JOIN sku_mc_cache c ON c.sku = p.sku
 WHERE p.activo = 1 AND p.discontinuado = 0;

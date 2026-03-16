@@ -43,7 +43,8 @@ AWS_PASS = os.getenv("AWS_MYSQL_PASSWORD", "")
 AWS_DB = os.getenv("AWS_MYSQL_DB", "ss2_staging")
 
 # Tablas maestras (neobd → ss2_staging): requeridas por ss2_v_purchase_suggestions_v2
-TABLAS_MAESTRAS = ["parametros_sku", "tablaprecios", "tabla1"]
+# sku_mc_cache: moq, multiplo_compra, q_cap para cálculo en tiempo real de qty_recomendada
+TABLAS_MAESTRAS = ["parametros_sku", "tablaprecios", "tabla1", "sku_mc_cache"]
 
 # Tablas SS2 (pipeline output)
 TABLAS_SS2 = [

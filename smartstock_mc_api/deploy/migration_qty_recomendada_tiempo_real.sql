@@ -1,9 +1,19 @@
 -- =============================================================================
--- Agrega demand_class, lifecycle_state, classification_reason a la vista
--- Incluye cálculo en tiempo real de qty_recomendada (stock actual, MOQ, múltiplo, q_cap)
--- Requiere: ss2_demand_classification, sku_mc_cache
--- Ejecutar contra la misma DB que ss2_v_purchase_suggestions_v2 (ej. ss2_staging)
+-- Cálculo en tiempo real de qty_recomendada
 -- =============================================================================
+-- La sugerencia se calcula con stock actual (oferta_total) en lugar del valor
+-- guardado en ss2_policy_results, evitando desfases cuando el stock cambia
+-- entre ejecuciones del pipeline.
+--
+-- Fórmula: qty = stock_objetivo - oferta_total, aplicando MOQ, múltiplo y q_cap.
+-- Requiere: sku_mc_cache (moq, multiplo_compra, q_cap). Si no existe:
+--   mysql -h HOST -u USER -p ss2_staging < app/sql/ddl_sku_mc_cache.sql
+--
+-- Ejecutar: mysql -h HOST -u USER -p ss2_staging < deploy/migration_qty_recomendada_tiempo_real.sql
+-- =============================================================================
+
+-- Nota: Si usás migration_add_demand_class (con dc), ejecutá la versión que incluye
+-- demand_class después de esta migración, o unificá ambas en un solo DDL.
 
 DROP VIEW IF EXISTS ss2_v_purchase_suggestions_v2;
 
@@ -113,16 +123,12 @@ SELECT
   pr.updated_at AS policy_updated_at,
   ps.priority_score,
   ps.priority_band,
-  ps.priority_reason,
-  dc.demand_class,
-  dc.lifecycle_state,
-  dc.classification_reason
+  ps.priority_reason
 FROM parametros_sku p
 LEFT JOIN v_stock_estado_unidades se ON se.sku = p.sku
 LEFT JOIN tablaprecios tp ON tp.`Product Number` = p.sku
 LEFT JOIN v_sku_features_12m f ON f.SKU = p.sku
 LEFT JOIN ss2_policy_results pr ON pr.sku = p.sku
 LEFT JOIN ss2_purchase_scores ps ON ps.sku = p.sku
-LEFT JOIN ss2_demand_classification dc ON dc.sku = p.sku
 LEFT JOIN sku_mc_cache c ON c.sku = p.sku
 WHERE p.activo = 1 AND p.discontinuado = 0;
