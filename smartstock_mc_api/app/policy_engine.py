@@ -14,6 +14,7 @@ Funciones modulares para:
 from __future__ import annotations
 
 import math
+import os
 from typing import Any, Optional
 
 # Mapeo criticidad -> service level (nivel de servicio objetivo)
@@ -38,7 +39,8 @@ def choose_base_demand_target(row: dict) -> tuple[float, str]:
     """
     Elige el demand target base: percentil MC o analytic_target.
     Retorna (valor, source) donde source es 'demand_p97', 'demand_p95', 'demand_p90', etc.
-    Regla: CRITICO -> P97 o P95; ALTO -> P95; MEDIO -> P90; BAJO -> P80.
+    Política: usar P90 como máximo para todos (CRITICO/ALTO/MEDIO -> P90; BAJO -> P80).
+    Evita objetivos excesivos en SKUs de baja rotación.
     """
     mc_enabled = int(row.get("mc_enabled") or 0)
     criticidad = (row.get("criticidad") or "BAJO").upper()
@@ -47,17 +49,8 @@ def choose_base_demand_target(row: dict) -> tuple[float, str]:
         analytic = float(row.get("stock_objetivo") or row.get("analytic_target") or 0)
         return analytic, "analytic_target"
 
-    # MC activo: elegir percentil según criticidad
-    if criticidad == "CRITICO":
-        p97, p95, p90 = row.get("demand_p97"), row.get("demand_p95"), row.get("demand_p90")
-        for v, src in [(p97, "demand_p97"), (p95, "demand_p95"), (p90, "demand_p90")]:
-            if v is not None:
-                return float(v), src
-        return 0.0, "demand_p95"
-    if criticidad == "ALTO":
-        val = float(row.get("demand_p95") or row.get("demand_p90") or 0)
-        return val, "demand_p95"
-    if criticidad == "MEDIO":
+    # MC activo: P90 para CRITICO/ALTO/MEDIO; P80 para BAJO
+    if criticidad in ("CRITICO", "ALTO", "MEDIO"):
         val = float(row.get("demand_p90") or row.get("demand_p50") or 0)
         return val, "demand_p90"
     # BAJO
@@ -65,12 +58,22 @@ def choose_base_demand_target(row: dict) -> tuple[float, str]:
     return val, "demand_p80"
 
 
+# Factor para cap automático: stock objetivo <= ceil(factor × unidades_12m)
+CAP_AUTO_FACTOR = float(os.getenv("CAP_AUTO_FACTOR", "1.5"))
+
+
 def apply_cap_hist(target: float, row: dict) -> tuple[float, str | None]:
     """
-    Aplica cap histórico (cap_objetivo o cap_hist).
+    Aplica cap histórico (cap_objetivo, cap_hist o cap automático).
+    Si cap_objetivo es null y hay unidades_12m, usa cap_auto = ceil(1.5 × unidades_12m).
     Retorna (target_capeado, "cap_hist:VAL" si recortó, None si no).
     """
     cap = row.get("cap_hist") or row.get("cap_objetivo")
+    if cap is None:
+        # Cap automático: 1.5 × demanda anual (límite científico para baja rotación)
+        unidades_12m = float(row.get("unidades_12m") or row.get("total_units_12m") or 0)
+        if unidades_12m > 0:
+            cap = math.ceil(CAP_AUTO_FACTOR * unidades_12m)
     if cap is None:
         return target, None
     cap = float(cap)
@@ -322,18 +325,20 @@ SELECT
   c.q_cap,
   p.cap_objetivo AS cap_hist,
   p.cap_cliente_dominante,
-  p.cap_vencimiento
+  p.cap_vencimiento,
+  COALESCE(f.total_units_12m, 0) AS unidades_12m
 FROM parametros_sku p
 LEFT JOIN v_stock_estado_unidades se ON se.sku = p.sku
 LEFT JOIN ss2_demand_cache d ON d.sku = p.sku
 LEFT JOIN sku_mc_cache c ON c.sku = p.sku
 LEFT JOIN ss2_demand_classification dc ON dc.sku = p.sku
+LEFT JOIN v_sku_features_12m f ON f.SKU = p.sku
 WHERE p.activo = 1 AND p.discontinuado = 0
   AND (dc.lifecycle_state IS NULL OR dc.lifecycle_state != 'DEAD')
 """
 
-# Fallback si parametros_sku no tiene cap_cliente_dominante, cap_vencimiento
-# o si ss2_demand_classification no existe
+# Fallback si parametros_sku no tiene cap_cliente_dominante, cap_vencimiento,
+# v_sku_features_12m no existe, etc.
 FETCH_POLICY_INPUTS_SQL_LEGACY = """
 SELECT
   p.sku,
@@ -349,7 +354,8 @@ SELECT
   COALESCE(d.regimen, 'NUEVO') AS regimen,
   d.demand_p50, d.demand_p80, d.demand_p90, d.demand_p95, d.demand_p97, d.demand_p99,
   c.q_cap,
-  p.cap_objetivo AS cap_hist
+  p.cap_objetivo AS cap_hist,
+  0 AS unidades_12m
 FROM parametros_sku p
 LEFT JOIN v_stock_estado_unidades se ON se.sku = p.sku
 LEFT JOIN ss2_demand_cache d ON d.sku = p.sku
