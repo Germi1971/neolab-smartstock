@@ -2,6 +2,8 @@
 
 Guía para actualizar código y DB en ambos servidores después de los cambios de cobertura 6 meses.
 
+**Checklist completo de espejado:** ver [CHECKLIST_ESPEJADO_SERVIDORES.md](./CHECKLIST_ESPEJADO_SERVIDORES.md)
+
 ---
 
 ## Paso 1: En tu PC – Commit y push
@@ -54,7 +56,7 @@ python run_full_pipeline.py --skip-rebuild
 ssh -i tu-key.pem ubuntu@TU_IP_LIGHTSAIL
 
 # --- MC API ---
-cd /home/ubuntu/neolab_smartstock   # o SmartStock/neolab_smartstock
+cd /home/ubuntu/neolab-smartstock   # con guión (no neolab_smartstock)
 git pull origin main
 
 # Agregar MC_REVIEW_DAYS si no está
@@ -68,7 +70,7 @@ curl http://localhost:8001/health
 # Debe incluir "config": {"coverage_months": 6, "review_days": 120, ...}
 
 # --- Stock HUD ---
-cd /home/ubuntu/SCANNER_REPO   # o la ruta donde esté el HUD
+cd /home/ubuntu/SCANNER_REPO
 git pull origin main
 
 # Reiniciar HUD (si usa systemd)
