@@ -469,29 +469,79 @@ def upsert_po_line_from_impo(conn, row: Dict[str, Any], *, is_new: bool):
 
 
 def process_changes(conn, changed_rows: List[Dict[str, Any]]) -> Tuple[int, int]:
+    """
+    Procesa cambios CDC. Regla: 1 evento SHIP = 1 factura (FAC).
+    Las líneas con mismo (sku, fac) se agrupan en un solo evento con qty = nº de líneas.
+    """
     n_events, n_items = 0, 0
+
+    # 1) Agrupar filas que generan SHIP por (sku, fac) para crear 1 evento por factura
+    ship_groups: Dict[Tuple[str, str], List[Dict]] = {}
+    other_rows: List[Dict] = []
 
     for r in changed_rows:
         prev_es = norm_es(r.get("last_es"))
         new_es = norm_es(r.get("es"))
+        event_type = map_es_to_event(prev_es, new_es) if es_upper(prev_es) != es_upper(new_es) else "INFO_CHANGE"
 
+        if event_type == "SHIP" and not is_po_line(r):
+            sku = norm_str(r.get("sku")) or ""
+            fac = norm_str(r.get("fac")) or ""
+            if sku and fac:
+                key = (sku, fac)
+                ship_groups.setdefault(key, []).append(r)
+            else:
+                other_rows.append(r)
+        else:
+            other_rows.append(r)
+
+    # 2) Crear 1 evento SHIP por (sku, fac) con qty = líneas de esa factura
+    for (sku, fac), rows in ship_groups.items():
+        event_ts = max((r.get("fecha_actualizacion") or now() for r in rows), default=now())
+        if isinstance(event_ts, dt.date) and not isinstance(event_ts, dt.datetime):
+            event_ts = dt.datetime.combine(event_ts, dt.time.min)
+        qty = len(rows)  # unidades = líneas con misma FAC (cada línea cantidad=1)
+        first = rows[0]
+        insert_event(
+            conn,
+            event_ts=event_ts,
+            uid=None,
+            sku=sku,
+            event_type="SHIP",
+            qty=qty,
+            from_es=(norm_es(first.get("last_es")) or None),
+            to_es="S",
+            id_inventario=int(first["id_inventario"]),
+            impo=first.get("impo"),
+            fac=fac,
+            rem=first.get("rem"),
+            customer_no=first.get("customer_no"),
+            lot=first.get("lot"),
+            location=first.get("location"),
+            details={
+                "cantidad": qty,
+                "n_lines": qty,
+                "note": "1 evento = 1 factura (FAC), qty = líneas agrupadas",
+                "is_po_line": False,
+            },
+        )
+        n_events += 1
+
+    # 3) Procesar el resto: PO, RECEIVE, RESERVE, etc. (1 evento por fila)
+    for r in other_rows:
+        prev_es = norm_es(r.get("last_es"))
+        new_es = norm_es(r.get("es"))
         is_new = r.get("last_hash") is None
 
-        # 1) PO line upsert si corresponde
         upsert_po_line_from_impo(conn, r, is_new=is_new)
 
-        # 2) determinar evento + qty
         event_ts = r.get("fecha_actualizacion") or now()
-
-        # qty raw de tabla1 (solo relevante para PO line)
         cantidad_raw = safe_int(r.get("cantidad"), 0)
 
         if is_po_line(r):
-            # PO event: CREATE vs UPDATE
             event_type = "PO_CREATE" if is_new else "PO_UPDATE"
-            event_qty = max(1, cantidad_raw)  # qty real de la orden
+            event_qty = max(1, cantidad_raw)
         else:
-            # item event: qty siempre 1 (item individual)
             es_changed = es_upper(prev_es) != es_upper(new_es)
             event_type = map_es_to_event(prev_es, new_es) if es_changed else "INFO_CHANGE"
             event_qty = 1
@@ -520,13 +570,19 @@ def process_changes(conn, changed_rows: List[Dict[str, Any]]) -> Tuple[int, int]
         )
         n_events += 1
 
-        # 3) estado actual por UID (solo si hay UID)
         if has_uid(r.get("uid")):
             upsert_inv_item(conn, r)
             n_items += 1
 
-        # 4) CDC
         upsert_cdc(conn, r)
+
+    # 4) CDC e inv_item para las filas SHIP (ya creamos el evento agrupado)
+    for (sku, fac), rows in ship_groups.items():
+        for r in rows:
+            if has_uid(r.get("uid")):
+                upsert_inv_item(conn, r)
+                n_items += 1
+            upsert_cdc(conn, r)
 
     return n_events, n_items
 

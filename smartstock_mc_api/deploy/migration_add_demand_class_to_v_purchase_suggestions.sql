@@ -1,6 +1,7 @@
 -- =============================================================================
 -- Agrega demand_class, lifecycle_state, classification_reason a la vista
--- Incluye cálculo en tiempo real de qty_recomendada (stock actual, MOQ, múltiplo, q_cap)
+-- Incluye cálculo en tiempo real de qty_recomendada (stock actual, MOQ, múltiplo, q_cap).
+-- Fix: si stock_actual >= stock_objetivo (gap<=0), sugerencia=0 (no aplicar MOQ cuando no hay compra).
 -- Requiere: ss2_demand_classification, sku_mc_cache
 -- Ejecutar contra la misma DB que ss2_v_purchase_suggestions_v2 (ej. ss2_staging)
 -- =============================================================================
@@ -45,6 +46,7 @@ SELECT
   -- Cálculo en tiempo real: qty = stock_objetivo - oferta_total, con MOQ/múltiplo/q_cap
   (CASE WHEN COALESCE(p.sugerencia_aprobada,0) = 1 THEN COALESCE(p.qty_aprobada,0)
         ELSE (CASE
+          WHEN GREATEST(0, COALESCE(pr.stock_objetivo_final, p.stock_objetivo) - (COALESCE(se.stock_libre_deposito,0) + COALESCE(se.impo_libre,0))) <= 0 THEN 0
           WHEN (COALESCE(pr.q_cap, c.q_cap) IS NOT NULL AND COALESCE(pr.q_cap, c.q_cap) > 0)
             THEN LEAST(
               CEILING(GREATEST(
@@ -60,6 +62,7 @@ SELECT
         END) END) AS qty_recomendada,
   (CASE WHEN COALESCE(p.sugerencia_aprobada,0) = 1 THEN COALESCE(p.qty_aprobada,0)
         ELSE (CASE
+          WHEN GREATEST(0, COALESCE(pr.stock_objetivo_final, p.stock_objetivo) - (COALESCE(se.stock_libre_deposito,0) + COALESCE(se.impo_libre,0))) <= 0 THEN 0
           WHEN (COALESCE(pr.q_cap, c.q_cap) IS NOT NULL AND COALESCE(pr.q_cap, c.q_cap) > 0)
             THEN LEAST(
               CEILING(GREATEST(
@@ -75,6 +78,7 @@ SELECT
         END) END) AS qty_final,
   (CASE WHEN COALESCE(p.sugerencia_aprobada,0) = 1 THEN COALESCE(p.qty_aprobada,0)
         ELSE (CASE
+          WHEN GREATEST(0, COALESCE(pr.stock_objetivo_final, p.stock_objetivo) - (COALESCE(se.stock_libre_deposito,0) + COALESCE(se.impo_libre,0))) <= 0 THEN 0
           WHEN (COALESCE(pr.q_cap, c.q_cap) IS NOT NULL AND COALESCE(pr.q_cap, c.q_cap) > 0)
             THEN LEAST(
               CEILING(GREATEST(
@@ -91,6 +95,7 @@ SELECT
   tp.`DIST Price -30%` AS costo_unit,
   ((CASE WHEN COALESCE(p.sugerencia_aprobada,0) = 1 THEN COALESCE(p.qty_aprobada,0)
         ELSE (CASE
+          WHEN GREATEST(0, COALESCE(pr.stock_objetivo_final, p.stock_objetivo) - (COALESCE(se.stock_libre_deposito,0) + COALESCE(se.impo_libre,0))) <= 0 THEN 0
           WHEN (COALESCE(pr.q_cap, c.q_cap) IS NOT NULL AND COALESCE(pr.q_cap, c.q_cap) > 0)
             THEN LEAST(
               CEILING(GREATEST(

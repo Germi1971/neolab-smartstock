@@ -64,10 +64,11 @@ def test_caso2_intermitente_mc_encendido():
         "q_cap": 30,
     }
     res = calculate_policy_for_sku(row)
-    assert res["demand_target_source"] == "demand_p95"
-    assert res["base_demand_target"] == 35
-    assert res["stock_objetivo_final"] == 35
-    assert res["qty_recomendada_final"] == 25  # 35-10, redondeado a múltiplo 5
+    # ALTO usa P90 (política: máximo P90 para todos)
+    assert res["demand_target_source"] == "demand_p90"
+    assert res["base_demand_target"] == 28
+    assert res["stock_objetivo_final"] == 28
+    assert res["qty_recomendada_final"] == 20  # 28-10=18, redondeado a múltiplo 5 -> 20
     assert "MC:" in res["policy_reason"]
 
 
@@ -170,6 +171,22 @@ def test_apply_cap_hist():
     assert msg is None
 
 
+def test_apply_cap_hist_auto():
+    """Cap automático: 1.5 × unidades_12m cuando cap_objetivo es null."""
+    # 9 uds/año -> cap_auto = ceil(13.5) = 14
+    t, msg = apply_cap_hist(26, {"unidades_12m": 9})
+    assert t == 14
+    assert "cap_hist" in (msg or "")
+
+    t, msg = apply_cap_hist(10, {"unidades_12m": 9})
+    assert t == 10
+    assert msg is None
+
+    # cap_objetivo explícito tiene prioridad
+    t, msg = apply_cap_hist(26, {"cap_objetivo": 12, "unidades_12m": 9})
+    assert t == 12
+
+
 def test_apply_cap_cliente():
     t, msg = apply_cap_cliente(100, {"cap_cliente_dominante": 60})
     assert t == 60
@@ -189,10 +206,10 @@ def test_apply_moq_rounding():
     assert apply_moq_rounding(55, row) == 50  # q_cap
 
 
-# --- Caso 7: CRITICO con demand_p97 ---
-def test_caso7_critico_demand_p97():
+# --- Caso 7: CRITICO usa P90 (política unificada) ---
+def test_caso7_critico_usa_p90():
     row = {
-        "sku": "SKU-CRIT-97",
+        "sku": "SKU-CRIT-90",
         "stock_objetivo": 30,
         "stock_min": 5,
         "mc_enabled": 1,
@@ -207,23 +224,25 @@ def test_caso7_critico_demand_p97():
         "multiplo_compra": 1,
     }
     res = calculate_policy_for_sku(row)
-    assert res["demand_target_source"] == "demand_p97"
-    assert res["base_demand_target"] == 38
-    assert res["stock_objetivo_final"] == 38
-    assert res["qty_recomendada_final"] == 28
+    # CRITICO ahora usa P90 (no P97)
+    assert res["demand_target_source"] == "demand_p90"
+    assert res["base_demand_target"] == 25
+    assert res["stock_objetivo_final"] == 25
+    assert res["qty_recomendada_final"] == 15
 
 
-def test_critico_fallback_p95_sin_p97():
-    """CRITICO sin demand_p97 usa demand_p95 como fallback."""
+def test_critico_fallback_p50_sin_p90():
+    """CRITICO sin demand_p90 usa demand_p50 como fallback."""
     row = {
         "sku": "SKU-CRIT-FB",
         "mc_enabled": 1,
         "criticidad": "CRITICO",
-        "demand_p95": 30,
+        "demand_p50": 18,
+        "demand_p90": None,
         "stock_posicion": 0,
         "moq": 1,
         "multiplo_compra": 1,
     }
     res = calculate_policy_for_sku(row)
-    assert res["demand_target_source"] == "demand_p95"
-    assert res["base_demand_target"] == 30
+    assert res["demand_target_source"] == "demand_p90"
+    assert res["base_demand_target"] == 18

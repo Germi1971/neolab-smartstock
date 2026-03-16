@@ -279,12 +279,19 @@ def run_demand_classification_batch(conn: Any) -> tuple[int, list[dict]]:
         with conn.cursor() as cur:
             cur.execute(FETCH_CLASSIFICATION_INPUTS_SQL)
             rows = cur.fetchall()
-    except pymysql.err.OperationalError as e:
+    except (pymysql.err.OperationalError, pymysql.err.ProgrammingError) as e:
         err = str(e).lower()
-        if "unknown column" in err or "doesn't exist" in err or "unknown table" in err:
-            with conn.cursor() as cur:
-                cur.execute(FETCH_CLASSIFICATION_INPUTS_SQL_LEGACY)
-                rows = cur.fetchall()
+        if "doesn't exist" in err or "unknown table" in err or "unknown column" in err or "1146" in err:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(FETCH_CLASSIFICATION_INPUTS_SQL_LEGACY)
+                    rows = cur.fetchall()
+            except Exception:
+                raise RuntimeError(
+                    "v_sku_classification_input no existe. Ejecutá:\n"
+                    "  mysql ... < deploy/ddl_v_sku_classification_input_from_ss2.sql  (si usás ss2_sku_features_12m)\n"
+                    "  mysql ... < deploy/migration_add_v_sku_classification_input.sql (si usás sku_obs_12m)"
+                ) from e
         else:
             raise
 

@@ -173,26 +173,58 @@ def dashboard_sugerencias():
         raise HTTPException(status_code=500, detail=f"dashboard/sugerencias error: {str(e)}")
 
 
+# Columnas CSV: todos los parámetros de la vista que existen y aparecen en el HUD.
+# Incluye: identificación, stock, objetivos, sugerencia, costos, clasificación, prioridad, auditoría.
+CSV_FIELDNAMES_HUD = [
+    "sku", "producto", "proveedor", "riesgo",
+    "stock_actual", "impo_libre", "reservado_deposito", "impo_reservada",
+    "stock_total_deposito", "impo_total", "oferta_total",
+    "meses_con_venta_12m", "demanda_prom_mensual_12m", "sku_activo", "estado_operativo",
+    "stock_min", "stock_objetivo_parametrico", "stock_objetivo", "stock_objetivo_modelo", "stock_objetivo_capeado",
+    "cap_objetivo", "aprobado", "fecha_aprobacion", "qty_aprobada",
+    "qty_recomendada_sin_cap", "qty_recomendada", "qty_final", "qty_recomendada_final",
+    "costo_unit", "inventario_usd", "impacto_usd",
+    "demand_target_source", "selected_service_level", "applied_caps",
+    "policy_reason", "explanation", "criticidad_policy", "policy_updated_at",
+    "priority_score", "priority_band", "priority_reason",
+    "demand_class", "lifecycle_state", "classification_reason",
+    "modelo_recomendado", "service_prob_usado", "review_updated_at",
+]
+
+
 @router.get("/dashboard/sugerencias/export")
 def dashboard_sugerencias_export():
     """
     Exporta todas las sugerencias como CSV descargable.
-    Intenta: v_sugerencias_compra, luego ss2_v_purchase_suggestions_v2.
-    Prueba MYSQL_DB y SS2_DB (si existe) para soportar vistas en ss2_staging.
+    Columnas alineadas con el HUD (modal SmartStock).
+    Intenta: ss2_v_purchase_suggestions_v2 (completo), luego v_sugerencias_compra.
     """
     import os
     import pymysql
 
     from app.main import cfg, get_conn
 
-    sql_vista = """
-    SELECT sku, producto, proveedor, riesgo, stock_actual, impo_libre,
-           stock_min, stock_objetivo, qty_recomendada, qty_final,
-           costo_unit, impacto_usd, modelo_recomendado, service_prob_usado, review_updated_at
-    FROM v_sugerencias_compra
+    # ss2_v: todos los parámetros de la vista (alineados con HUD)
+    sql_ss2 = """
+    SELECT sku, producto, proveedor, riesgo,
+           stock_actual, impo_libre, reservado_deposito, impo_reservada,
+           stock_total_deposito, impo_total, oferta_total,
+           meses_con_venta_12m, demanda_prom_mensual_12m, sku_activo, estado_operativo,
+           stock_min, stock_objetivo_parametrico,
+           stock_objetivo_final AS stock_objetivo, stock_objetivo_modelo, stock_objetivo_capeado,
+           cap_objetivo, aprobado, fecha_aprobacion, qty_aprobada,
+           qty_recomendada_sin_cap, qty_recomendada, qty_final, qty_recomendada_final,
+           costo_unit, impacto_usd,
+           demand_target_source, selected_service_level, applied_caps,
+           policy_reason, explanation, criticidad_policy, policy_updated_at,
+           priority_score, priority_band, priority_reason,
+           demand_class, lifecycle_state, classification_reason,
+           modelo_recomendado, service_prob_usado, review_updated_at
+    FROM ss2_v_purchase_suggestions_v2
     ORDER BY impacto_usd DESC;
     """
-    sql_ss2 = """
+    # ss2 fallback si faltan columnas (demand_class, reservado_deposito, etc)
+    sql_ss2_min = """
     SELECT sku, producto, proveedor, riesgo, stock_actual, impo_libre,
            stock_min, stock_objetivo_final AS stock_objetivo,
            qty_recomendada, qty_final,
@@ -200,12 +232,18 @@ def dashboard_sugerencias_export():
     FROM ss2_v_purchase_suggestions_v2
     ORDER BY impacto_usd DESC;
     """
+    sql_vista = """
+    SELECT sku, producto, proveedor, riesgo, stock_actual, impo_libre,
+           stock_min, stock_objetivo, qty_recomendada, qty_final,
+           costo_unit, impacto_usd, modelo_recomendado, service_prob_usado, review_updated_at
+    FROM v_sugerencias_compra
+    ORDER BY impacto_usd DESC;
+    """
 
     dbs_to_try = [cfg.database]
     ss2_db = os.getenv("SS2_DB", "").strip() or os.getenv("MYSQL_DB_SS2", "").strip()
     if ss2_db and ss2_db not in dbs_to_try:
         dbs_to_try.append(ss2_db)
-    # Si la DB principal es neobd, probar ss2_staging (donde suelen estar las vistas)
     if cfg.database == "neobd" and "ss2_staging" not in dbs_to_try:
         dbs_to_try.append("ss2_staging")
 
@@ -221,7 +259,7 @@ def dashboard_sugerencias_export():
                 charset="utf8mb4",
                 cursorclass=pymysql.cursors.DictCursor,
             )
-            for sql in (sql_vista, sql_ss2):
+            for sql in (sql_ss2, sql_ss2_min, sql_vista):
                 try:
                     with conn.cursor() as cur:
                         cur.execute(sql)
@@ -239,10 +277,28 @@ def dashboard_sugerencias_export():
     if not rows:
         rows = [{"sku": "Sin datos", "producto": "", "qty_final": 0}]
 
+    # Agregar inventario_usd y normalizar columnas para alinear con HUD
+    for r in rows:
+        stock = safe_float(r.get("stock_actual"))
+        costo = safe_float(r.get("costo_unit"))
+        r["inventario_usd"] = round(stock * costo, 2)
+        # Asegurar stock_objetivo si viene como stock_objetivo_final
+        if "stock_objetivo" not in r and r.get("stock_objetivo_final") is not None:
+            r["stock_objetivo"] = r["stock_objetivo_final"]
+        # Rellenar columnas faltantes para CSV consistente
+        str_cols = ("demand_class", "lifecycle_state", "classification_reason", "policy_reason",
+                    "producto", "proveedor", "explanation", "criticidad_policy", "priority_reason",
+                    "demand_target_source", "applied_caps", "priority_band")
+        for k in CSV_FIELDNAMES_HUD:
+            if k not in r:
+                r[k] = "" if k in str_cols else 0
+
+    fieldnames = CSV_FIELDNAMES_HUD
+
     output = io.StringIO()
     writer = csv.DictWriter(
         output,
-        fieldnames=list(rows[0].keys()),
+        fieldnames=fieldnames,
         extrasaction="ignore",
         lineterminator="\n",
     )
