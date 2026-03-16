@@ -64,7 +64,8 @@ def sync_table(table: str, optional: bool = False) -> int:
             return 0
         cols = list(rows[0].keys())
         placeholders = ", ".join(["%s"] * len(cols))
-        cols_str = ", ".join(f"`{c}`" for c in cols)
+        # Escapar % en nombres de columna (ej. "DIST Price -30%") para que pymysql no lo interprete
+        cols_str = ", ".join(f"`{c.replace('%', '%%')}`" for c in cols)
         sql_insert = f"INSERT INTO `{table}` ({cols_str}) VALUES ({placeholders})"
         with conn_dst.cursor() as cur:
             cur.execute(f"DELETE FROM `{table}`")
