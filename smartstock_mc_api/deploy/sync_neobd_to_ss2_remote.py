@@ -33,16 +33,31 @@ SS2_USER = os.getenv("SS2_USER", "ss2")
 SS2_PASS = os.getenv("SS2_PASS", "")
 SS2_DB = os.getenv("SS2_DB", "ss2_staging")
 
+# Tablas que neobd suele tener (parametros, precios)
 TABLAS = [
     "parametros_sku",
     "tablaprecios",
+]
+# Tablas ss2_* y sku_mc_cache: pueden estar solo en ss2_staging (creadas por MC API)
+# tabla1: para v_stock_estado_unidades (puede ser grande)
+TABLAS_OPCIONALES = [
+    "sku_mc_cache",
     "ss2_demand_cache",
     "ss2_policy_results",
     "ss2_purchase_scores",
     "ss2_demand_classification",
+    "tabla1",
 ]
-# sku_mc_cache puede no existir; tabla1 para v_stock_estado_unidades (puede ser grande)
-TABLAS_OPCIONALES = ["sku_mc_cache", "tabla1"]
+
+
+def table_exists(conn, table: str) -> bool:
+    """Verifica si la tabla existe en la DB."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = %s LIMIT 1",
+            (table,),
+        )
+        return cur.fetchone() is not None
 
 
 def sync_table(table: str, optional: bool = False) -> int:
@@ -56,6 +71,11 @@ def sync_table(table: str, optional: bool = False) -> int:
         database=SS2_DB, charset="utf8mb4",
     )
     try:
+        if not table_exists(conn_src, table):
+            if optional:
+                print(f"  {table}: omitida (no existe en origen)")
+                return 0
+            raise pymysql.err.ProgrammingError(1146, f"Table '{NEODB_DB}.{table}' doesn't exist")
         with conn_src.cursor() as cur:
             cur.execute(f"SELECT * FROM `{table}`")
             rows = cur.fetchall()
@@ -97,8 +117,8 @@ def main():
     for t in TABLAS_OPCIONALES:
         try:
             total += sync_table(t, optional=True)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"  {t}: omitida ({e})")
     print(f"Total: {total} filas sincronizadas")
 
 
