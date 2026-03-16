@@ -177,63 +177,84 @@ def dashboard_sugerencias():
 def dashboard_sugerencias_export():
     """
     Exporta todas las sugerencias como CSV descargable.
-    Usa la misma vista v_sugerencias_compra que el dashboard.
+    Intenta: v_sugerencias_compra, luego ss2_v_purchase_suggestions_v2.
+    Prueba MYSQL_DB y SS2_DB (si existe) para soportar vistas en ss2_staging.
     """
+    import os
+    import pymysql
+
     from app.main import cfg, get_conn
 
-    sql = """
-    SELECT
-      sku,
-      producto,
-      proveedor,
-      riesgo,
-      stock_actual,
-      impo_libre,
-      stock_min,
-      stock_objetivo,
-      qty_recomendada,
-      qty_final,
-      costo_unit,
-      impacto_usd,
-      modelo_recomendado,
-      service_prob_usado,
-      review_updated_at
+    sql_vista = """
+    SELECT sku, producto, proveedor, riesgo, stock_actual, impo_libre,
+           stock_min, stock_objetivo, qty_recomendada, qty_final,
+           costo_unit, impacto_usd, modelo_recomendado, service_prob_usado, review_updated_at
     FROM v_sugerencias_compra
     ORDER BY impacto_usd DESC;
     """
+    sql_ss2 = """
+    SELECT sku, producto, proveedor, riesgo, stock_actual, impo_libre,
+           stock_min, stock_objetivo_final AS stock_objetivo,
+           qty_recomendada, qty_final,
+           costo_unit, impacto_usd, modelo_recomendado, service_prob_usado, review_updated_at
+    FROM ss2_v_purchase_suggestions_v2
+    ORDER BY impacto_usd DESC;
+    """
 
-    try:
-        with get_conn(cfg) as conn:
-            with conn.cursor(pymysql.cursors.DictCursor) as cur:
-                cur.execute(sql)
-                rows = cur.fetchall()
+    dbs_to_try = [cfg.database]
+    ss2_db = os.getenv("SS2_DB", "").strip() or os.getenv("MYSQL_DB_SS2", "").strip()
+    if ss2_db and ss2_db not in dbs_to_try:
+        dbs_to_try.append(ss2_db)
+    # Si la DB principal es neobd, probar ss2_staging (donde suelen estar las vistas)
+    if cfg.database == "neobd" and "ss2_staging" not in dbs_to_try:
+        dbs_to_try.append("ss2_staging")
 
-        if not rows:
-            rows = [{"sku": "Sin datos", "producto": "", "qty_final": 0}]
+    rows = []
+    for db_name in dbs_to_try:
+        try:
+            conn = pymysql.connect(
+                host=cfg.host,
+                port=cfg.port,
+                user=cfg.user,
+                password=cfg.password,
+                database=db_name,
+                charset="utf8mb4",
+                cursorclass=pymysql.cursors.DictCursor,
+            )
+            for sql in (sql_vista, sql_ss2):
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute(sql)
+                        rows = cur.fetchall()
+                    conn.close()
+                    if rows:
+                        break
+                except pymysql.err.OperationalError:
+                    continue
+            if rows:
+                break
+        except Exception:
+            pass
 
-        output = io.StringIO()
-        writer = csv.DictWriter(
-            output,
-            fieldnames=list(rows[0].keys()),
-            extrasaction="ignore",
-            lineterminator="\n",
-        )
-        writer.writeheader()
-        writer.writerows(rows)
+    if not rows:
+        rows = [{"sku": "Sin datos", "producto": "", "qty_final": 0}]
 
-        # BOM UTF-8 para que Excel abra correctamente acentos
-        content = ("\ufeff" + output.getvalue()).encode("utf-8")
+    output = io.StringIO()
+    writer = csv.DictWriter(
+        output,
+        fieldnames=list(rows[0].keys()),
+        extrasaction="ignore",
+        lineterminator="\n",
+    )
+    writer.writeheader()
+    writer.writerows(rows)
 
-        return StreamingResponse(
-            iter([content]),
-            media_type="text/csv; charset=utf-8",
-            headers={
-                "Content-Disposition": "attachment; filename=sugerencias_smartstock.csv"
-            },
-        )
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Export error: {str(e)}")
+    content = ("\ufeff" + output.getvalue()).encode("utf-8")
+    return StreamingResponse(
+        iter([content]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=sugerencias_smartstock.csv"},
+    )
 
 
 @router.get("/ml/sku/{sku}")
