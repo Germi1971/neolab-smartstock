@@ -38,17 +38,23 @@ SRC_DB = os.getenv("MYSQL_DB", "neobd")
 # Destino: AWS (AWS_MYSQL_* en .env)
 AWS_HOST = os.getenv("AWS_MYSQL_HOST", "")
 AWS_PORT = int(os.getenv("AWS_MYSQL_PORT", os.getenv("MYSQL_PORT", "3306")))
-AWS_USER = os.getenv("AWS_MYSQL_USER", os.getenv("MYSQL_USER", "ss2"))
-AWS_PASS = os.getenv("AWS_MYSQL_PASSWORD", os.getenv("MYSQL_PASSWORD", ""))
-AWS_DB = os.getenv("AWS_MYSQL_DB", os.getenv("MYSQL_DB", "ss2_staging"))
+AWS_USER = os.getenv("AWS_MYSQL_USER", "")
+AWS_PASS = os.getenv("AWS_MYSQL_PASSWORD", "")
+AWS_DB = os.getenv("AWS_MYSQL_DB", "ss2_staging")
 
-TABLAS_SYNC = [
-    "ss2_sku_features_12m",  # requerida por v_sku_features_12m
+# Tablas maestras (neobd → ss2_staging): requeridas por ss2_v_purchase_suggestions_v2
+TABLAS_MAESTRAS = ["parametros_sku", "tablaprecios", "tabla1"]
+
+# Tablas SS2 (pipeline output)
+TABLAS_SS2 = [
+    "ss2_sku_features_12m",
     "ss2_demand_classification",
     "ss2_demand_cache",
     "ss2_policy_results",
     "ss2_purchase_scores",
 ]
+
+TABLAS_SYNC = TABLAS_MAESTRAS + TABLAS_SS2
 
 
 def get_conn(host, port, user, password, db):
@@ -63,13 +69,47 @@ def get_conn(host, port, user, password, db):
     )
 
 
+def ensure_table_exists(src_conn, dst_conn, table: str, src_db: str, dst_db: str) -> bool:
+    """Crea la tabla en destino si no existe, copiando estructura desde origen."""
+    with dst_conn.cursor() as cur:
+        cur.execute(
+            "SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema = %s AND table_name = %s",
+            (dst_db, table),
+        )
+        if cur.fetchone().get("n", 0) > 0:
+            return True
+    try:
+        with src_conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema = %s AND table_name = %s",
+                (src_db, table),
+            )
+            if cur.fetchone().get("n", 0) == 0:
+                return False
+            cur.execute(f"SHOW CREATE TABLE `{table}`")
+            row = cur.fetchone()
+        create_sql = (row.get("Create Table") or row.get("create table") or (list(row.values())[1] if row and len(row) > 1 else "")) if row else ""
+        if not create_sql:
+            return False
+        if "IF NOT EXISTS" not in create_sql:
+            create_sql = create_sql.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ", 1)
+        with dst_conn.cursor() as cur:
+            cur.execute(create_sql)
+        dst_conn.commit()
+        print(f"  {table}: tabla creada en destino")
+        return True
+    except Exception as e:
+        print(f"  {table}: no se pudo crear tabla ({e})")
+        return False
+
+
 def sync_table(src_conn, dst_conn, table: str) -> int:
     try:
         with src_conn.cursor() as cur:
             cur.execute(f"SELECT * FROM `{table}`")
             rows = cur.fetchall()
     except Exception as e:
-        print(f"  {table}: SKIP ({e})")
+        print(f"  {table}: SKIP origen ({e})")
         return 0
     if not rows:
         return 0
@@ -95,11 +135,15 @@ def main():
             " (o usá MYSQL_* si origen y destino son iguales)"
         )
         sys.exit(1)
+    if not SRC_HOST or not SRC_USER or not SRC_PASS:
+        print("Configurá MYSQL_HOST, MYSQL_USER, MYSQL_PASSWORD en .env (origen neobd)")
+        sys.exit(1)
     src = get_conn(SRC_HOST, SRC_PORT, SRC_USER, SRC_PASS, SRC_DB)
     dst = get_conn(AWS_HOST, AWS_PORT, AWS_USER, AWS_PASS, AWS_DB)
     try:
         total = 0
         for t in TABLAS_SYNC:
+            ensure_table_exists(src, dst, t, SRC_DB, AWS_DB)
             n = sync_table(src, dst, t)
             dst.commit()
             print(f"  {t}: {n} filas")
