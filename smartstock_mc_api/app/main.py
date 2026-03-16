@@ -581,6 +581,24 @@ WHERE sku = %s
 LIMIT 1;
 """
 
+# Para Stock HUD: cache enriquecido con policy results (stock_objetivo_mc, qty_recomendada_mc)
+FETCH_CACHE_FOR_HUD_SQL = """
+SELECT
+  d.sku,
+  d.mc_enabled,
+  d.mc_reason,
+  d.regimen,
+  d.criticidad,
+  COALESCE(pr.stock_min, p.stock_min) AS stock_min,
+  COALESCE(pr.stock_objetivo_final, p.stock_objetivo) AS stock_objetivo_mc,
+  COALESCE(pr.qty_recomendada_final, 0) AS qty_recomendada_mc
+FROM ss2_demand_cache d
+LEFT JOIN ss2_policy_results pr ON pr.sku = d.sku
+LEFT JOIN parametros_sku p ON p.sku = d.sku AND p.activo = 1 AND p.discontinuado = 0
+WHERE d.sku = %s
+LIMIT 1;
+"""
+
 TOP_STOCKOUT_SQL = """
 SELECT sku, mc_enabled, p_stockout_at_current_stock AS p_stockout, exp_lost_units, mc_reason, updated_at
 FROM ss2_demand_cache
@@ -1071,15 +1089,33 @@ def mc_sku(sku: str, req: RunSkuRequest):
 
 @app.get("/mc/cache/{sku}")
 def mc_cache_get(sku: str):
-    """Lee de ss2_demand_cache (contrato Demand Engine)."""
+    """
+    Lee de ss2_demand_cache + ss2_policy_results.
+    Retorna cache enriquecido con stock_objetivo_mc, qty_recomendada_mc, stock_min
+    para que el Stock HUD muestre mínimo, objetivo y sugerencias correctamente.
+    """
     try:
         with get_conn(cfg) as conn:
             with conn.cursor() as cur:
-                cur.execute(FETCH_DEMAND_CACHE_SQL, (sku,))
-                row = cur.fetchone()
+                # Intentar query enriquecida (Policy + parametros)
+                try:
+                    cur.execute(FETCH_CACHE_FOR_HUD_SQL, (sku,))
+                    row = cur.fetchone()
+                except pymysql.err.OperationalError as oe:
+                    if "doesn't exist" in str(oe).lower() or "Unknown column" in str(oe):
+                        cur.execute(FETCH_DEMAND_CACHE_SQL, (sku,))
+                        row = cur.fetchone()
+                        if row:
+                            row = dict(row)
+                            row.setdefault("stock_objetivo_mc", None)
+                            row.setdefault("qty_recomendada_mc", None)
+                            row.setdefault("stock_min", None)
+                    else:
+                        raise
         if not row:
             raise HTTPException(status_code=404, detail=f"No cache row for SKU: {sku}")
-        return {"ok": True, "cache": row}
+        cache = dict(row) if not isinstance(row, dict) else row
+        return {"ok": True, "cache": cache}
     except HTTPException:
         raise
     except Exception as e:
