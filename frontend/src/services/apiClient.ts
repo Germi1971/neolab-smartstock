@@ -10,6 +10,21 @@ export type ApiError = Error & {
 
 import { PurchaseSuggestion, ApiListResponse } from '../types';
 
+export type ChartDataResponse = {
+  sku: string;
+  demanda_historica: { month: string; qty: number }[];
+  proyeccion_meses: { month: number; stock_proyectado: number; demanda_mensual: number }[];
+  stock_actual: number;
+  stock_min: number;
+  stock_objetivo: number;
+  demanda_prom_mensual: number;
+  demand_p50: number;
+  demand_p80: number;
+  demand_p90: number;
+  horizon_days: number;
+  p_stockout: number;
+};
+
 class ApiClient {
   private baseUrl: string;
 
@@ -140,6 +155,11 @@ class ApiClient {
   async getSKUDetail(sku: string) {
     if (!sku) throw new Error('SKU vacío');
     return this.request(`/api/ml/sku/${encodeURIComponent(sku)}`);
+  }
+
+  async getSKUChartData(sku: string) {
+    if (!sku) throw new Error('SKU vacío');
+    return this.request<ChartDataResponse>(`/api/ml/sku/${encodeURIComponent(sku)}/chart_data`);
   }
 
   async approveSuggestion(sku: string, payload: { qty_final: number; notas?: string }) {

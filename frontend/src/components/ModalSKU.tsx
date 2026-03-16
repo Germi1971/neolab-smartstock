@@ -1,5 +1,6 @@
 import { useSKUCache } from '../hooks/useSKUCache';
 import { apiClient } from '../services/apiClient';
+import { SKUCharts } from './SKUCharts';
 
 interface ModalSKUProps {
   sku: string | null;
@@ -165,6 +166,9 @@ export function ModalSKU({ sku, isOpen, onClose }: ModalSKUProps) {
 
           {!isLoading && data && (
             <div className="space-y-6">
+              {/* Gráficos de situación del SKU */}
+              <SKUCharts sku={sku} isVisible={true} />
+
               {/* Parámetros / Reposición */}
               <section className="bg-gray-50 rounded-lg p-4">
                 <h3 className="text-lg font-semibold text-gray-900 mb-3 flex items-center gap-2">
