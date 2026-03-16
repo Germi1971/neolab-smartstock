@@ -28,7 +28,7 @@ NEODB_DB = os.getenv("NEODB_DB", "neobd")
 
 # === ss2_staging (Lightsail local) ===
 SS2_HOST = os.getenv("SS2_HOST", "127.0.0.1")
-SS2_PORT = int(os.getenv("SS2_PORT", "3307"))
+SS2_PORT = int(os.getenv("SS2_PORT", "3306"))
 SS2_USER = os.getenv("SS2_USER", "ss2")
 SS2_PASS = os.getenv("SS2_PASS", "")
 SS2_DB = os.getenv("SS2_DB", "ss2_staging")

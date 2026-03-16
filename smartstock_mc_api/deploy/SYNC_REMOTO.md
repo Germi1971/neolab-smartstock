@@ -1,6 +1,6 @@
 # Sync neobd → ss2_staging (servidores distintos)
 
-Cuando **neobd** (190.228.29.65) y **ss2_staging** (Lightsail 127.0.0.1:3307) están en servidores distintos.
+Cuando **neobd** (190.228.29.65) y **ss2_staging** (Lightsail 127.0.0.1:3306) están en servidores distintos.
 
 ## Opción 1: Script Python (en Lightsail)
 
