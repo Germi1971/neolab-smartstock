@@ -17,9 +17,9 @@ cd "$MC_API_DIR"
 echo "$(date '+%Y-%m-%d %H:%M:%S') Ejecutando classification/run..."
 curl -s -X POST http://localhost:8001/classification/run -H "Content-Type: application/json" -d '{}' || { echo "WARN classification/run (tabla puede no existir)"; }
 
-# 3. Demand Engine: Monte Carlo → ss2_demand_cache
+# 3. Demand Engine: Monte Carlo → ss2_demand_cache (review_days=120 = 6 meses cobertura)
 echo "$(date '+%Y-%m-%d %H:%M:%S') Ejecutando mc/run..."
-curl -s -X POST http://localhost:8001/mc/run -H "Content-Type: application/json" -d '{}' || { echo "ERROR mc/run"; exit 1; }
+curl -s -X POST http://localhost:8001/mc/run -H "Content-Type: application/json" -d '{"review_days":120}' || { echo "ERROR mc/run"; exit 1; }
 echo ""
 
 # 4. Policy Engine → ss2_policy_results

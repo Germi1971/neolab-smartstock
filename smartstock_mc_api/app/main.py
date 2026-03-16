@@ -70,6 +70,9 @@ SERVICE_NO_CRITICO = float(os.getenv('SERVICE_NO_CRITICO', '0.50'))
 # [FIX DOMICILIADO - TRUNCAMIENTO MC] Límite superior de cantidad recomendada (múltiplo de Forecast_m)
 Q_CAP_MULTIPLE = float(os.getenv('Q_CAP_MULTIPLE', '3'))
 
+# Cobertura: review_days para horizonte MC. 120 = 6 meses (60 LT + 120 review)
+MC_REVIEW_DAYS_DEFAULT = int(os.getenv('MC_REVIEW_DAYS', '120'))
+
 # Tabla simple para overrides manuales por SKU
 OVERRIDE_TABLE = os.getenv('SKU_OVERRIDE_TABLE', 'sku_service_override')
 
@@ -736,14 +739,14 @@ updated_at=NOW();
 # -----------------------------
 class RunBatchRequest(BaseModel):
     n_sims: int = Field(default=8000, ge=500, le=50000)
-    review_days: int = Field(default=30, ge=0, le=180)
+    review_days: int = Field(default=MC_REVIEW_DAYS_DEFAULT, ge=0, le=365)
     service_prob_override: Optional[float] = Field(default=None, ge=0.5, le=0.999)
     seed: Optional[int] = Field(default=None)
 
 
 class RunSkuRequest(BaseModel):
     n_sims: int = Field(default=8000, ge=500, le=50000)
-    review_days: int = Field(default=30, ge=0, le=180)
+    review_days: int = Field(default=MC_REVIEW_DAYS_DEFAULT, ge=0, le=365)
     service_prob_override: Optional[float] = Field(default=None, ge=0.5, le=0.999)
     seed: Optional[int] = None
     force: bool = Field(default=False)
@@ -790,14 +793,20 @@ def root():
 
 @app.get("/health")
 def health():
+    # Config de cobertura (para Stock HUD y otros clientes)
+    lt_days = float(LT_OPERATIVO_DEFAULT or 60)
+    review_days = int(MC_REVIEW_DAYS_DEFAULT or 120)
+    horizon_days = int(lt_days) + review_days
+    coverage_months = round(horizon_days / 30)
+    config = {"coverage_months": coverage_months, "review_days": review_days, "horizon_days": horizon_days}
     try:
         with get_conn(cfg) as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT 1 AS ok;")
                 row = cur.fetchone()
-        return {"ok": True, "db": True, "row": row}
+        return {"ok": True, "db": True, "row": row, "config": config}
     except Exception as e:
-        return {"ok": False, "db": False, "error": str(e)}
+        return {"ok": False, "db": False, "error": str(e), "config": config}
 
 
 def compute_one(
