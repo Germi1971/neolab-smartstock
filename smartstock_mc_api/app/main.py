@@ -536,6 +536,203 @@ WHERE a.sku = %s
 LIMIT 1;
 """
 
+# Fallback para ss2_staging cuando v_analisis_sku_excel_mc no existe o está rota (error 1356)
+FETCH_ACTIVE_SKUS_SQL_SS2 = """
+SELECT
+  p.sku,
+  COALESCE(p.activo, 1) AS activo,
+  NULL AS model,
+  NULL AS tipo_demanda,
+  (1 - COALESCE(f.p_event, 0)) AS PctZero,
+  COALESCE(f.p_event, COALESCE(f.events_12m, 0) / 12.0) AS p_event,
+  COALESCE(f.q_mean_event, 0) AS q_mean_event,
+  COALESCE(f.q_sd_event, 0) AS q_sd_event,
+  COALESCE(f.demanda_prom_mensual_12m, f.total_units_12m / 12.0, 0) AS Forecast_m,
+  0 AS sigma_mensual_12m,
+  (COALESCE(se.stock_libre_deposito, 0) + COALESCE(se.impo_libre, 0)) AS stock_posicion,
+  60 / 30.0 AS lt_months,
+  60 AS lt_days,
+  NULL AS service_target,
+  1 AS moq,
+  1 AS multiplo_compra,
+  NULL AS q_cap,
+  365 AS dias_observados,
+  COALESCE(f.events_12m, 0) AS eventos_12m,
+  COALESCE(f.total_units_12m, 0) AS unidades_12m,
+  COALESCE(f.q_mean_event, 0) AS mu_unidades_evento,
+  COALESCE(f.q_sd_event, 0) AS sigma_unidades_evento,
+  NULL AS mu_gap_dias,
+  NULL AS sigma_gap_dias,
+  dc.demand_class,
+  dc.lifecycle_state
+FROM parametros_sku p
+LEFT JOIN v_sku_features_12m f ON f.SKU = p.sku
+LEFT JOIN v_stock_estado_unidades se ON se.sku = p.sku
+LEFT JOIN ss2_demand_classification dc ON dc.sku = p.sku
+WHERE COALESCE(p.activo, 1) = 1 AND COALESCE(p.discontinuado, 0) = 0
+  AND COALESCE(f.events_12m, 0) + COALESCE(f.total_units_12m, 0) > 0
+"""
+
+FETCH_ACTIVE_SKUS_SQL_SS2_MIN = """
+SELECT
+  p.sku,
+  COALESCE(p.activo, 1) AS activo,
+  NULL AS model,
+  NULL AS tipo_demanda,
+  0.5 AS PctZero,
+  0.5 AS p_event,
+  1 AS q_mean_event,
+  0 AS q_sd_event,
+  0 AS Forecast_m,
+  0 AS sigma_mensual_12m,
+  0 AS stock_posicion,
+  60 / 30.0 AS lt_months,
+  60 AS lt_days,
+  NULL AS service_target,
+  1 AS moq,
+  1 AS multiplo_compra,
+  NULL AS q_cap,
+  365 AS dias_observados,
+  0 AS eventos_12m,
+  0 AS unidades_12m,
+  1 AS mu_unidades_evento,
+  0 AS sigma_unidades_evento,
+  NULL AS mu_gap_dias,
+  NULL AS sigma_gap_dias,
+  dc.demand_class,
+  dc.lifecycle_state
+FROM parametros_sku p
+LEFT JOIN ss2_demand_classification dc ON dc.sku = p.sku
+WHERE COALESCE(p.activo, 1) = 1 AND COALESCE(p.discontinuado, 0) = 0
+"""
+
+FETCH_ONE_SKU_SQL_SS2 = """
+SELECT
+  p.sku,
+  COALESCE(p.activo, 1) AS activo,
+  NULL AS model,
+  NULL AS tipo_demanda,
+  (1 - COALESCE(f.p_event, 0)) AS PctZero,
+  COALESCE(f.p_event, COALESCE(f.events_12m, 0) / 12.0) AS p_event,
+  COALESCE(f.q_mean_event, 0) AS q_mean_event,
+  COALESCE(f.q_sd_event, 0) AS q_sd_event,
+  COALESCE(f.demanda_prom_mensual_12m, f.total_units_12m / 12.0, 0) AS Forecast_m,
+  0 AS sigma_mensual_12m,
+  (COALESCE(se.stock_libre_deposito, 0) + COALESCE(se.impo_libre, 0)) AS stock_posicion,
+  60 / 30.0 AS lt_months,
+  60 AS lt_days,
+  NULL AS service_target,
+  1 AS moq,
+  1 AS multiplo_compra,
+  NULL AS q_cap,
+  365 AS dias_observados,
+  COALESCE(f.events_12m, 0) AS eventos_12m,
+  COALESCE(f.total_units_12m, 0) AS unidades_12m,
+  COALESCE(f.q_mean_event, 0) AS mu_unidades_evento,
+  COALESCE(f.q_sd_event, 0) AS sigma_unidades_evento,
+  NULL AS mu_gap_dias,
+  NULL AS sigma_gap_dias,
+  dc.demand_class,
+  dc.lifecycle_state
+FROM parametros_sku p
+LEFT JOIN v_sku_features_12m f ON f.SKU = p.sku
+LEFT JOIN v_stock_estado_unidades se ON se.sku = p.sku
+LEFT JOIN ss2_demand_classification dc ON dc.sku = p.sku
+WHERE p.sku = %s AND COALESCE(p.activo, 1) = 1 AND COALESCE(p.discontinuado, 0) = 0
+LIMIT 1;
+"""
+
+FETCH_ONE_SKU_SQL_SS2_MIN = """
+SELECT
+  p.sku,
+  COALESCE(p.activo, 1) AS activo,
+  NULL AS model,
+  NULL AS tipo_demanda,
+  0.5 AS PctZero,
+  0.5 AS p_event,
+  1 AS q_mean_event,
+  0 AS q_sd_event,
+  0 AS Forecast_m,
+  0 AS sigma_mensual_12m,
+  0 AS stock_posicion,
+  60 / 30.0 AS lt_months,
+  60 AS lt_days,
+  NULL AS service_target,
+  1 AS moq,
+  1 AS multiplo_compra,
+  NULL AS q_cap,
+  365 AS dias_observados,
+  0 AS eventos_12m,
+  0 AS unidades_12m,
+  1 AS mu_unidades_evento,
+  0 AS sigma_unidades_evento,
+  NULL AS mu_gap_dias,
+  NULL AS sigma_gap_dias,
+  dc.demand_class,
+  dc.lifecycle_state
+FROM parametros_sku p
+LEFT JOIN ss2_demand_classification dc ON dc.sku = p.sku
+WHERE p.sku = %s AND COALESCE(p.activo, 1) = 1 AND COALESCE(p.discontinuado, 0) = 0
+LIMIT 1;
+"""
+
+
+def _is_view_broken_error(e: Exception) -> bool:
+    """Detecta si el error indica vista rota (1356, invalid table/column, etc.)."""
+    s = str(e).lower()
+    return (
+        "1356" in s
+        or "references invalid" in s
+        or "doesn't exist" in s
+        or "unknown table" in s
+        or "unknown column" in s
+    )
+
+
+def _fetch_active_skus_with_fallback(conn) -> list:
+    """Intenta v_analisis_sku_excel_mc; si falla, usa fallbacks SS2 (parametros_sku + v_sku_features_12m)."""
+    with conn.cursor() as cur:
+        for sql, _ in [
+            (FETCH_ACTIVE_SKUS_SQL_WITH_DC, "v_analisis_sku_excel_mc+dc"),
+            (FETCH_ACTIVE_SKUS_SQL, "v_analisis_sku_excel_mc"),
+            (FETCH_ACTIVE_SKUS_SQL_SS2, "ss2 (v_sku_features_12m)"),
+            (FETCH_ACTIVE_SKUS_SQL_SS2_MIN, "ss2 (solo parametros_sku)"),
+        ]:
+            try:
+                cur.execute(sql)
+                rows = cur.fetchall()
+                if rows:
+                    if "ss2" in _:
+                        log.info(f"MC: usando fallback {_} (v_analisis_sku_excel_mc no disponible)")
+                    return rows
+            except Exception as e:
+                if not _is_view_broken_error(e):
+                    raise
+                continue
+    return []
+
+
+def _fetch_one_sku_with_fallback(conn, sku: str) -> Optional[dict]:
+    """Intenta v_analisis_sku_excel_mc; si falla, usa fallbacks SS2."""
+    with conn.cursor() as cur:
+        for sql, _ in [
+            (FETCH_ONE_SKU_SQL_WITH_DC, "v_analisis_sku_excel_mc+dc"),
+            (FETCH_ONE_SKU_SQL, "v_analisis_sku_excel_mc"),
+            (FETCH_ONE_SKU_SQL_SS2, "ss2 (v_sku_features_12m)"),
+            (FETCH_ONE_SKU_SQL_SS2_MIN, "ss2 (solo parametros_sku)"),
+        ]:
+            try:
+                cur.execute(sql, (sku,))
+                row = cur.fetchone()
+                if row:
+                    return row
+            except Exception as e:
+                if not _is_view_broken_error(e):
+                    raise
+                continue
+    return None
+
+
 UPSERT_DEMAND_CACHE_SQL = """
 INSERT INTO ss2_demand_cache
 (sku, n_sims, horizon_days, lt_days, review_days, lambda_eventos_mes, q_mean_event, q_sd_event,
@@ -1016,16 +1213,12 @@ def mc_run(req: RunBatchRequest):
 
     try:
         with get_conn(cfg) as conn:
-            with conn.cursor() as cur:
-                try:
-                    cur.execute(FETCH_ACTIVE_SKUS_SQL_WITH_DC)
-                    rows = cur.fetchall()
-                except pymysql.err.OperationalError as e:
-                    if "doesn't exist" in str(e).lower() or "unknown table" in str(e).lower():
-                        cur.execute(FETCH_ACTIVE_SKUS_SQL)
-                        rows = cur.fetchall()
-                    else:
-                        raise
+            rows = _fetch_active_skus_with_fallback(conn)
+            if not rows:
+                raise HTTPException(
+                    status_code=500,
+                    detail="No se pudo obtener SKUs. Verificá: parametros_sku, v_sku_features_12m o v_analisis_sku_excel_mc.",
+                )
 
             log.info(f"MC batch: fetched {len(rows)} active SKUs.")
 
@@ -1065,16 +1258,7 @@ def mc_sku(sku: str, req: RunSkuRequest):
 
     try:
         with get_conn(cfg) as conn:
-            with conn.cursor() as cur:
-                try:
-                    cur.execute(FETCH_ONE_SKU_SQL_WITH_DC, (sku,))
-                    row = cur.fetchone()
-                except pymysql.err.OperationalError as e:
-                    if "doesn't exist" in str(e).lower() or "unknown table" in str(e).lower():
-                        cur.execute(FETCH_ONE_SKU_SQL, (sku,))
-                        row = cur.fetchone()
-                    else:
-                        raise
+            row = _fetch_one_sku_with_fallback(conn, sku)
 
             if not row:
                 raise HTTPException(status_code=404, detail=f"SKU not found: {sku}")
