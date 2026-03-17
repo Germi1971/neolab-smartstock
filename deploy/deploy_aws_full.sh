@@ -31,6 +31,12 @@ else
   echo "   (No frontend dir - skip)"
 fi
 
+# 2b. Permisos para cron (evitar Permission denied)
+if [ -f "smartstock_mc_api/deploy/cron-daily.sh" ]; then
+  chmod +x smartstock_mc_api/deploy/cron-daily.sh smartstock_mc_api/deploy/cron-daily-with-sync.sh
+  echo "   Cron scripts: +x"
+fi
+
 # 3. Reiniciar servicios
 echo ""
 echo "3. Reiniciar servicios..."
