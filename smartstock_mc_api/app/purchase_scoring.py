@@ -354,11 +354,11 @@ SELECT
     THEN ef.margen_total_12m / (ef.revenue_prom_evento_12m * ef.eventos_12m)
     ELSE NULL
   END) AS margen_pct,
-  -- top1_share_12m: share del cliente dominante (0-1). Si existe v_sku_top_client_share, unir aquí.
-  NULL AS top1_share_12m,
-  -- demanda_6m, demanda_24m: para score_acceleration. Si v_sku_features_12m las tiene, reemplazar NULL.
-  NULL AS demanda_6m,
-  NULL AS demanda_24m,
+  -- top1_share_12m: share del cliente dominante en 12m (0-1) desde neobd.tabla1
+  COALESCE(cc.top1_share_12m, 0) AS top1_share_12m,
+  -- demanda_6m, demanda_24m: promedio mensual de los últimos 6m y 24m (desde neobd.tabla1)
+  COALESCE(dem.demand_6m  / 6.0,  f.demanda_prom_mensual_12m) AS demanda_6m,
+  COALESCE(dem.demand_24m / 24.0, f.demanda_prom_mensual_12m) AS demanda_24m,
   -- days_of_supply: stock / demanda_anual_diaria. Para penalty_overstock alternativo.
   (CASE
     WHEN COALESCE(f.demanda_prom_mensual_12m, 0) > 0
@@ -372,6 +372,28 @@ LEFT JOIN ss2_policy_results pr ON pr.sku = p.sku
 LEFT JOIN ss2_demand_cache d ON d.sku = p.sku
 LEFT JOIN v_sku_features_12m f ON f.SKU = p.sku
 LEFT JOIN v_sku_event_features_12m ef ON ef.SKU = p.sku
+LEFT JOIN (
+  SELECT
+    sub.sku,
+    MAX(sub.cli_qty) / NULLIF(SUM(sub.cli_qty), 0) AS top1_share_12m
+  FROM (
+    SELECT `Código` AS sku, `Cliente N°` AS cli,
+           SUM(ABS(Cantidad)) AS cli_qty
+    FROM neobd.tabla1
+    WHERE `E/S` IN ('S', 'R') AND Fecha >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+      AND `Cliente N°` IS NOT NULL
+    GROUP BY `Código`, `Cliente N°`
+  ) sub
+  GROUP BY sub.sku
+) cc ON cc.sku = p.sku
+LEFT JOIN (
+  SELECT `Código` AS sku,
+    SUM(CASE WHEN Fecha >= DATE_SUB(CURDATE(), INTERVAL 6  MONTH) THEN ABS(Cantidad) ELSE 0 END) AS demand_6m,
+    SUM(CASE WHEN Fecha >= DATE_SUB(CURDATE(), INTERVAL 24 MONTH) THEN ABS(Cantidad) ELSE 0 END) AS demand_24m
+  FROM neobd.tabla1
+  WHERE `E/S` IN ('S', 'R') AND Fecha >= DATE_SUB(CURDATE(), INTERVAL 24 MONTH)
+  GROUP BY `Código`
+) dem ON dem.sku = p.sku
 WHERE p.activo = 1 AND p.discontinuado = 0
 """
 
